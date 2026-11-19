@@ -1,7 +1,7 @@
 // Vehicles: models, driving / flying / boating physics, traffic and parked vehicles.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { G, scene, clamp, R, pick, wrapAngle, std, addMesh, key, toXZ, smooth } from './core.js';
+import { G, scene, clamp, R, pick, wrapAngle, std, addMesh, key, toXZ, smooth, depthBias } from './core.js';
 import { heightAt, isWater, isSnow, maskAt, waterLevel } from './terrain.js';
 import { edges, nodeEdges, NX, NZ, nodeY, roadGrid, surfaceY, walkY, collideBuildings, isDriveType, nearestRoad, pois, buildingAt } from './city.js';
 import { scarePeds, peds, say, makeHuman, SKIN, HAIR, PANTS } from './people.js';
@@ -60,6 +60,7 @@ const rimM = std('#a3a9af', { metalness: 0.85, roughness: 0.3 }), trimM = std('#
 const blobTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 4, 32, 32, 32); gr.addColorStop(0, 'rgba(0,0,0,0.75)'); gr.addColorStop(0.6, 'rgba(0,0,0,0.45)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const blobM = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 const blobGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+let carMatsBiased = false;
 const placed = (geo, x, y, z, rx = 0) => { const q = geo.clone(); if (rx) q.rotateX(rx); q.translate(x, y, z); return q; };
 function wheelGeos(r) {
   if (wheelCache.has(r)) return wheelCache.get(r);
@@ -157,6 +158,9 @@ function carModel(type, color) {
   const paint = std(color, { metalness: 0.6, roughness: 0.28, envMapIntensity: 1.2 });
   const B = bodyGeos(type), S = B.S, { L, W } = S, f = -L / 2;
   addMesh(B.body, paint, 0, 0, 0, g);
+  if (!carMatsBiased) {   // details sitting ON the body (plates, arches, trim, lights) win over it; glass sits a hair behind the roof skin
+    carMatsBiased = true; depthBias(blobM, 0.0006); for (const m of [trimM, plateM, archM, lightM, tailM]) depthBias(m, 0.0002); depthBias(glassM, -0.00015);
+  }
   const sh = addMesh(blobGeo, blobM, 0, 0.04, 0, g, false); sh.scale.set(W + 0.7, 1, L + 0.9); sh.receiveShadow = false; sh.renderOrder = 1;
   if (B.cabin) { addMesh(B.cabin, glassM, 0, 0, 0, g); addMesh(B.roof, paint, 0, 0, 0, g, false); }
   if (B.mirrors) addMesh(B.mirrors, paint, 0, 0, 0, g, false);

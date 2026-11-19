@@ -35,6 +35,32 @@ renderer.toneMappingExposure = 0.6;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+// ---------- anti-flicker for decals ----------
+// The log depth buffer (needed to see from your feet to Mt Baker) makes WebGL IGNORE polygonOffset, so every decal that
+// relied on it (car shadow blobs, court lines, ski runs, posters, murals, graffiti…) z-fought with the surface under it
+// and flashed. depthBias() pulls a material's depth a tiny RELATIVE amount toward the camera inside the log-depth shader
+// (works at any distance). biasDecals() finds every material that asked for polygonOffset and converts it.
+export function depthBias(mat, k = 0.0004) {
+  if (!mat || mat.userData.depthBias) return; mat.userData.depthBias = k;
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey;
+  mat.onBeforeCompile = function (sh, r) {
+    if (prev) prev.call(this, sh, r);
+    sh.vertexShader = sh.vertexShader.replace('#include <logdepthbuf_vertex>', `#include <logdepthbuf_vertex>
+#if defined( USE_LOGDEPTHBUF ) && defined( USE_LOGDEPTHBUF_EXT )
+  vFragDepth *= ${(1 - k).toFixed(6)};
+#endif`);
+  };
+  mat.customProgramCacheKey = function () { return (prevKey ? prevKey.call(this) : '') + '|db' + k; };
+  mat.needsUpdate = true;
+}
+const _seenMats = new WeakSet();
+export function biasDecals(root) {
+  root.traverse(o => { const ms = o.material; if (!ms) return; for (const m of Array.isArray(ms) ? ms : [ms]) {
+    if (!m || _seenMats.has(m)) continue; _seenMats.add(m);
+    if (m.polygonOffset && !m.userData.depthBias) depthBias(m, 0.00025 * Math.max(1, Math.abs(m.polygonOffsetFactor || 1)));
+  } });
+}
+
 export const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0xb5c7d3, 0.0000062);
 export const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.2, 420000);   // far enough to see Mt Baker, the Olympics and Vancouver Island

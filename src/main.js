@@ -1,6 +1,7 @@
 // Vancouver Free Roam: loading, character select, phone, and the main game loop.
 import * as THREE from 'three';
-import { G, renderer, scene, camera, updateSky, endFrameInput, tapped, key, clamp, lockMouse, toXZ, pick, updateFarCull, hemi } from './core.js';
+import { G, renderer, scene, camera, updateSky, endFrameInput, tapped, key, clamp, lockMouse, toXZ, pick, updateFarCull, hemi, biasDecals } from './core.js';
+let decalT = 0;   // anti-flicker sweep for decal materials (see core.js depthBias)
 import { initTerrain, heightAt, cullTreeChunks, updateWater, CITY, isWater, updateChunks, prebuildChunksNear } from './terrain.js';
 import { initCity, updateSigns, updateCityNight, surfaceY, roadName, nearestRoad, updateBuildingTiles } from './city.js';
 import { initPeople, updatePeds, updateZombies, updateBubbles, setPlayerRef, ZONE } from './people.js';
@@ -368,6 +369,7 @@ function loop(now, manual) {
   G.camHigh = camera.position.y - heightAt(camera.position.x, camera.position.z);
   // under the forest canopy the sky light is blocked: the forest is darker and moodier inside (G.gloom eases in terrain.js)
   hemi.intensity *= 1 - 0.6 * (G.gloom || 0) * Math.max(0, 1 - G.camHigh / 45);
+  decalT -= dt; if (decalT <= 0) { decalT = 1.5; biasDecals(scene); }
   renderWorld();
   __mark('renderer.render(scene,');
   endFrameInput();

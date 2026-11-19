@@ -697,7 +697,12 @@ function buildBuildings(progress) {
       }
     }
     let items = chunks.get(key); if (!items) chunks.set(key, items = []);
-    items.push({ p, cnt, r, gC, bl, roof, top, base, raised, style, h: b.h, area, cx, cz });
+    // OSM often maps the same wall twice (a building and its building:part, or neighbours drawn over each other): give each
+    // building's DRAWN outline its own tiny push outward (3–13 cm) and its roof a tiny height nudge, so coplanar walls and
+    // roofs never fight (that flicker read as flashing buildings). Collisions keep the real outline.
+    const grow = 0.03 + hash2(cx * 1.37, cz * 0.71) * 0.1, gp = new Float32Array(cnt * 2);
+    for (let i = 0; i < cnt; i++) { const dx = p[i * 2] - cx, dz = p[i * 2 + 1] - cz, L = Math.hypot(dx, dz) || 1; gp[i * 2] = p[i * 2] + dx / L * grow; gp[i * 2 + 1] = p[i * 2 + 1] + dz / L * grow; }
+    items.push({ p: gp, cnt, r, gC, bl, roof, top: top + hash2(cz * 0.9, cx * 1.3) * 0.08, base, raised, style, h: b.h, area, cx, cz });
     // collision record
     let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
     for (let i = 0; i < cnt; i++) { x0 = Math.min(x0, p[i * 2]); x1 = Math.max(x1, p[i * 2]); z0 = Math.min(z0, p[i * 2 + 1]); z1 = Math.max(z1, p[i * 2 + 1]); }

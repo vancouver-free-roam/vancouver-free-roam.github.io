@@ -1,6 +1,6 @@
 // Terrain: real elevation (DEM), coastline land/water mask, ground texture, mountains, water, forests.
 import * as THREE from 'three';
-import { G, scene, renderer, clamp, smooth, vnoise, hash2, toXZ, canvasTex } from './core.js';
+import { G, scene, renderer, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias } from './core.js';
 
 // ---------- elevation data ----------
 const decode = D => { const s = atob(D.b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); D.arr = new Int16Array(u.buffer); return D; };
@@ -359,6 +359,7 @@ export function initTerrain(progress) {
   sea.position.x = -120000; sea.receiveShadow = true; scene.add(sea);
   const lakeMat = waterMat.clone(); lakeMat.color.set(0x1d5560); lakeMat.side = THREE.DoubleSide;
   waterShader(waterMat); waterShader(lakeMat);
+  depthBias(waterMat, -0.0004); depthBias(lakeMat, -0.0004);   // water sits a hair BEHIND ground at the same height: the shoreline no longer flickers
   for (const l of lakes) { l.mesh.material = lakeMat; scene.add(l.mesh); }
 }
 // three wave sizes in world space (swell, chop, ripples) drifting different ways, fading with distance (no far-off sparkle),
