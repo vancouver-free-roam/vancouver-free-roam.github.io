@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vancouver Free Roam</title>
+<link rel="stylesheet" href="src/style.css" />
+<link rel="icon" href="data:," />
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- loading -->
+<div id="loading" class="screen">
+  <div class="card">
+    <h1>Vancouver <span>Free Roam</span></h1>
+    <p id="loadmsg">Loading the real map of Vancouver…</p>
+    <div class="bar"><i id="loadbar"></i></div>
+    <p style="opacity:.55;font-size:12px;margin:14px auto 0">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" style="color:inherit">OpenStreetMap contributors</a> (ODbL) · Elevation: Mapzen Terrain Tiles (AWS)</p>
+    <p id="tip" style="opacity:.7;font-size:14px;max-width:460px;margin:18px auto 0"></p>
+  </div>
+</div>
+
+<!-- character select -->
+<div id="select" class="screen hidden">
+  <div class="selwrap">
+    <h1>Choose your character</h1>
+    <p class="sub">Everyone can go anywhere and do any side job. Each character has their own story.</p>
+    <div id="chars"></div>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="topleft" class="panel">
+    <div id="who"></div>
+    <div class="stats"><span>💵 <b id="money">0</b></span><span>❤️ <b id="health">100</b></span><span id="karma" title="Karma"></span></div>
+    <div id="clock"></div>
+  </div>
+  <div id="objective" class="panel hidden"></div>
+  <div id="mapwrap"><canvas id="minimap" width="220" height="220"></canvas></div>
+  <div id="place" class="panel"></div>
+  <div id="vehicle" class="panel hidden"></div>
+  <div id="prompt" class="hidden"></div>
+  <div id="crosshair">+</div>
+  <div id="fps" class="panel hidden"></div>
+  <div id="hint" class="panel">Click the game to look around with the mouse · <b>Tab</b> phone / missions · <b>H</b> help</div>
+</div>
+<div id="bubbles"></div>
+<div id="toast"></div>
+<div id="tunnel" class="hidden"></div>
+<div id="dialog" class="hidden"><div id="dname"></div><div id="dtext"></div><div id="dbtns"></div></div>
+
+<!-- phone -->
+<div id="phone" class="hidden">
+  <div class="phonebar"><span id="ptitle">📱 Phone</span><button id="pclose">✕</button></div>
+  <div class="tabs"><button data-tab="missions" class="on">Missions</button><button data-tab="map">Map</button><button data-tab="wallet">Wallet</button><button data-tab="travel">Travel</button><button data-tab="world">World</button><button data-tab="settings">Settings</button><button data-tab="eggs">Secrets</button><button data-tab="help">Help</button></div>
+  <div id="pbody"></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script>
+(function () {
+  // first visit: pick graphics quality to suit the computer
+  try {
+    var S = 'vfr-settings-v1', s = JSON.parse(localStorage.getItem(S) || '{}');
+    if (!s.quality) {
+      var weak = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+      try { var gl = document.createElement('canvas').getContext('webgl'), ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        var gpu = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+        if (/intel|swiftshader|llvmpipe|basic render/i.test(gpu) && !/arc/i.test(gpu)) weak = true; } catch (e) {}
+      s.quality = weak ? 'medium' : 'high'; localStorage.setItem(S, JSON.stringify(s));
+    }
+  } catch (e) {}
+  var files = [["data/dem.js",7431149],["data/dem2.js",4099481],["data/dem3.js",6153041],["data/dem4.js",472611],["data/map-00.js",7465012],["data/map-01.js",7424802],["data/map-02.js",6800261],["data/map-03.js",6800121],["data/map-04.js",6123609],["data/map-05.js",6800746],["data/map-06.js",6800115],["data/map-07.js",6800128],["data/map-08.js",6800113],["data/map-09.js",6800404],["data/map-10.js",5633782],["data/map-11.js",6800064],["data/map-12.js",5426833]];
+  var total = files.reduce(function (a, f) { return a + f[1]; }, 0), got = files.map(function () { return 0; });
+  var bar = document.getElementById('loadbar'), msg = document.getElementById('loadmsg');
+  msg.textContent = 'Downloading the real map of Vancouver… (first visit can take a minute, after that it is much faster)';
+  function show() { var g = got.reduce(function (a, b) { return a + b; }, 0); bar.style.width = Math.min(60, 60 * g / total) + '%'; }
+  function get(f, i) {
+    return fetch(f[0]).then(function (r) {
+      if (!r.ok) throw new Error(f[0] + ' ' + r.status);
+      if (!r.body || !r.body.getReader) return r.text();
+      var rd = r.body.getReader(), parts = [], dec = new TextDecoder();
+      function pump() { return rd.read().then(function (x) {
+        if (x.done) { parts.push(dec.decode()); got[i] = f[1]; show(); return parts.join(''); }
+        parts.push(dec.decode(x.value, { stream: true })); got[i] = Math.min(f[1], got[i] + x.value.length); show(); return pump(); }); }
+      return pump();
+    });
+  }
+  Promise.all(files.map(get)).then(function (texts) {
+    msg.textContent = 'Building the city…';
+    texts.forEach(function (t) { var el = document.createElement('script'); el.textContent = t; document.body.appendChild(el); });
+    var m = document.createElement('script'); m.type = 'module'; m.src = 'src/main.js'; document.body.appendChild(m);
+  }).catch(function (e) { msg.textContent = 'Could not download the game (' + e.message + '). Check your internet and refresh the page.'; });
+})();
+</script>
+</body>
+</html>
