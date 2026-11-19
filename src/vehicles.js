@@ -368,7 +368,9 @@ export function drivePlayer(v, dt, input) {
   v.steer += (input.steer * d.turn - v.steer) * Math.min(1, dt * (input.steer ? 3.2 : 6));
   // Shift = extra effort: pedal / push / kick harder on bikes, boards and scooters, or floor it in anything with an engine
   const light = d.show && d.kind === 'road', human = d.pedal || v.type === 'skate' || v.type === 'scooter';
-  const effort = input.boost ? (human ? 1.4 : 1.22) : 1, vmax = d.max * effort, acc = d.acc * (input.boost ? 1.3 : 1);
+  // full effort: a strong rider sprints a bike to ~55 km/h, kicks an e-scooter to ~50, pushes a skateboard to ~42
+  const SPRINT = { bike: 1.65, scooter: 1.6, skate: 1.45 };
+  const effort = input.boost ? (SPRINT[v.type] || (human ? 1.5 : 1.22)) : 1, vmax = d.max * effort, acc = d.acc * (input.boost ? (human ? 1.75 : 1.3) : 1);
   if (input.up) v.speed += (v.speed < 0 ? acc * 2 : acc * Math.max(0, 1 - v.speed / vmax)) * dt * (snow ? 0.6 : 1);   // no engine braking above top speed (downhill keeps its speed)
   if (input.down) v.speed -= (v.speed > 0 ? d.acc * 2.2 : d.acc * 0.6) * dt;
   if (input.brake) { const s = Math.sign(v.speed); v.speed -= s * d.acc * 2.8 * dt; if (Math.sign(v.speed) !== s) v.speed = 0; }

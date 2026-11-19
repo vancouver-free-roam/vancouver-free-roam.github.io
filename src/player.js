@@ -87,6 +87,7 @@ player.enterVehicle = function (v) {
 };
 player.exitVehicle = function (force) {
   const v = this.vehicle; if (!v) return;
+  if (camera.fov !== 65) { camera.fov = 65; camera.updateProjectionMatrix(); }   // drop the speed-rush wide view
   const g = surfaceY(v.x, v.z, v.y);
   if (!force && (v.d.kind === 'heli' || v.d.kind === 'plane') && v.y - g > 6) { this.chute = true; ui.toast('🪂 Parachute!', 'You jumped out. The aircraft is on its own now…', 2500); }
   v.driver = null; if (v.d.kind !== 'heli' && v.d.kind !== 'plane') v.speed = 0; v.vx = v.vz = 0;
@@ -359,6 +360,14 @@ export function updateCamera(dt) {
   if (v) {
     const base = { heli: 18, seaplane: 22, cessna: 16, jet: 60, jumbo: 95, bus: 16, van: 10 }[v.type] ?? (v.d.show ? 5.5 : 8);
     dist = Math.max(base * (camMode === 1 ? 2 : 1), dist); h = v.d.kind === 'heli' || v.d.kind === 'plane' ? 4 : 1.8;
+    // a rush of speed on the ground and water: the view widens as you go faster, and on bikes/boards the camera tucks in
+    // low behind you (close to the street, so the road and kerbs stream past)
+    if (v.d.kind !== 'plane' && v.d.kind !== 'heli') {
+      const sp = Math.abs(v.speed || 0), light = v.d.show;
+      const want = 65 + Math.min(light ? 22 : 15, sp * (light ? 1.0 : 0.3));
+      if (Math.abs(camera.fov - want) > 0.05) { camera.fov += (want - camera.fov) * Math.min(1, dt * 2.5); camera.updateProjectionMatrix(); }
+      if (light && camMode === 0) { dist *= 1 - Math.min(0.25, sp * 0.018); h = 1.8 - Math.min(0.5, sp * 0.035); }
+    } else if (camera.fov !== 65) { camera.fov += (65 - camera.fov) * Math.min(1, dt * 3); if (Math.abs(camera.fov - 65) < 0.05) camera.fov = 65; camera.updateProjectionMatrix(); }
     if (G.t - lastMouse > 1.2 && (v.speedAbs > 2 || v.d.kind === 'plane')) { G.camYaw += wrapAngle(v.yaw - G.camYaw) * Math.min(1, dt * 2.5); G.camPitch += ((v.d.kind === 'plane' ? 0.18 - v.pitch * 0.5 : 0.22) - G.camPitch) * Math.min(1, dt * 1.5); }
   } else if (player.board && G.t - lastMouse > 1) G.camYaw += wrapAngle(player.yaw - G.camYaw) * Math.min(1, dt * 2);
   // the camera's height follows a SMOOTHED copy of yours, so little road bumps, curbs and kerb edges don't shake the view
