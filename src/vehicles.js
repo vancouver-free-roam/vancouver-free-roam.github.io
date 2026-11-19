@@ -441,10 +441,10 @@ function flyHeli(v, dt, input) {
   const [fx, fz] = fwd(v);
   const ax = (input.up ? 1 : 0) - (input.down ? 1 : 0), sx = (key('KeyE') ? 1 : 0) - (key('KeyQ') ? 1 : 0);
   v.yaw += input.steer * v.d.turn * dt;
-  const acc = v.d.acc;
+  const acc = v.d.acc * (input.boost ? 1.4 : 1), vmax = v.d.max * (input.boost ? 1.25 : 1);   // Shift = more power
   v.vx += (fx * ax * acc + -fz * sx * acc * 0.6) * dt; v.vz += (fz * ax * acc + fx * sx * acc * 0.6) * dt;
   v.vx *= 1 - dt * 0.45; v.vz *= 1 - dt * 0.45;
-  const sp = Math.hypot(v.vx, v.vz); if (sp > v.d.max) { v.vx *= v.d.max / sp; v.vz *= v.d.max / sp; }
+  const sp = Math.hypot(v.vx, v.vz); if (sp > vmax) { v.vx *= vmax / sp; v.vz *= vmax / sp; }
   if (lift) v.vy += ((input.jump ? 9 : 0) - (input.descend ? 9 : 0)) * dt * 1.6;
   v.vy *= 1 - dt * 1.4; if (!lift) v.vy -= 6 * dt;
   v.x += v.vx * dt; v.z += v.vz * dt; v.y += v.vy * dt;
@@ -472,7 +472,7 @@ function flyPlane(v, dt, input) {
   const prevY = v.y;
   const ow = isWater(v.x, v.z), wl = waterLevel(v.x, v.z), gy = ow ? wl : surfaceY(v.x, v.z, v.y + 3);
   const onSurface = v.y <= gy + 0.4 && (ow ? d.floats : d.gear);
-  let acc = (v.throttle * d.max - v.speed) * (onSurface ? 0.22 : 0.3);
+  let acc = (v.throttle * d.max * (input.boost ? 1.2 : 1) - v.speed) * (onSurface ? 0.22 : 0.3) * (input.boost ? 1.3 : 1);   // Shift = extra power
   if (onSurface && input.down && v.throttle === 0) acc -= 9;   // wheel brakes
   v.speed = Math.max(0, v.speed + acc * dt);
   const canFly = v.speed > d.vr;
@@ -495,7 +495,7 @@ function flyPlane(v, dt, input) {
     else if (ok && sink > 6) { sfx.bump?.(); input.onBumpyLanding?.(); }   // a bumpy landing: just a thud
     v.y = g2 + 0.05; if (!climb || !canFly) v.pitch = Math.max(v.pitch, 0);
     v.roll *= 0.5;
-    if (!ok) v.speed *= 0.5;   // belly-landing / wheels in the water: slows you right down
+    if (!ok) v.speed = Math.min(v.speed, 7);   // belly-landing / wheels in the water: slows you right down (but a seaplane can still taxi over a bit of shore)
   }
   if (v.y < 400 && collideBuildings(v, d.r, v.y + 1)) {   // into a building: wrecked only if you hit it fast
     if (v.speed > 30) { input.onCrash?.(Math.max(40, v.speed)); crash(v); } else { v.speed = 0; v.throttle = 0; sfx.bump?.(); }

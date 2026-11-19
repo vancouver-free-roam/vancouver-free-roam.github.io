@@ -81,8 +81,8 @@ player.enterVehicle = function (v) {
   if (v.type === 'scooter') { this.karma -= 1; ui.toast('🛴 You "borrowed" a Lyme scooter', 'Free! The app is very disappointed in you. (-1 karma)', 2600); }
   v.driver = 'player'; v.keep = true; this.vehicle = v; this.stats.rode.add(v.type);
   this.model.grp.visible = !!v.d.show; this.board = false; board.visible = false; skis.visible = false;
-  if (v.d.kind === 'heli') ui.toast('🚁 Helicopter', 'Space = up · Shift = down · W/S forward/back · A/D turn · Q/E slide', 3500);
-  if (v.d.kind === 'plane') ui.toast(v.d.floats ? '🛩️ Seaplane' : '✈️ ' + v.d.name, `Hold W for throttle · lift off above ${Math.round(v.d.vr * 3.6)} km/h with Space · Shift = dive · A/D turn · S = brake on the ground`, 5000);
+  if (v.d.kind === 'heli') ui.toast('🚁 Helicopter', 'Space = up · X = down · W/S forward/back · A/D turn · Q/E slide · Shift = faster', 3500);
+  if (v.d.kind === 'plane') ui.toast(v.d.floats ? '🛩️ Seaplane' : '✈️ ' + v.d.name, `Hold W for throttle · lift off above ${Math.round(v.d.vr * 3.6)} km/h with Space · X = dive · A/D turn · Shift = extra power · S = brake on the ground`, 5000);
   if (v.type === 'jet' || v.type === 'jumbo') ui.toast('✈️ ' + v.d.name, 'Captain speaking: "Please fasten your seatbelts. I have never flown before." · Hold W, steer down the runway, Space to lift off above ' + Math.round(v.d.vr * 3.6) + ' km/h', 6000);
 };
 player.exitVehicle = function (force) {
@@ -261,7 +261,7 @@ export function updatePlayer(dt) {
     const input = {
       up: key('KeyW') || key('ArrowUp'), down: key('KeyS') || key('ArrowDown'), steer: (key('KeyA') || key('ArrowLeft') ? 1 : 0) - (key('KeyD') || key('ArrowRight') ? 1 : 0),
       brake: key('Space') && player.vehicle.d.kind !== 'heli' && player.vehicle.d.kind !== 'plane' && !(player.vehicle.d.show && player.vehicle.d.kind === 'road'), jump: key('Space'), hop: hopP, player, onBigHop: () => ui.toast('🚀 Big air!', '', 700),
-      onBail: () => { const veh = player.vehicle; player.exitVehicle(true); player.vy = 3; player.hurt(10, 'crash'); if (veh) { veh.speed = 0; veh.air = null; } }, descend: key('ShiftLeft') || key('ShiftRight'), boost: key('ShiftLeft') || key('ShiftRight'),
+      onBail: () => { const veh = player.vehicle; player.exitVehicle(true); player.vy = 3; player.hurt(10, 'crash'); if (veh) { veh.speed = 0; veh.air = null; } }, descend: key('KeyX'), boost: key('ShiftLeft') || key('ShiftRight'),   // in the air: X = down / dive, Shift = more power (not Ctrl: Ctrl+W closes the browser tab)
       onCrash: s => { if (G.t < (player.crashCool || 0)) return; player.crashCool = G.t + 0.8;   // one hit = one crash (scraping along a wall/rock used to count every frame)
         player.stats.bumps = (player.stats.bumps || 0) + 1; if (s > 25) { player.hurt(['plane', 'heli'].includes(player.vehicle?.d.kind) ? s * 1.2 : (s - 18) * 2.2, 'crash'); ui.toast('💥 CRASH!', player.vehicle && ['plane', 'heli'].includes(player.vehicle.d.kind) ? 'Hang tight: a mechanic is on the way to patch it up.' : '', player.vehicle && ['plane', 'heli'].includes(player.vehicle.d.kind) ? 4000 : 1200); } },
       onRepair: () => ui.toast('🔧 Patched up!', pick(['A mechanic duct-taped the wing back on. Ready for take-off.', 'Good as new. Mostly.', 'The mechanic says: "Maybe land on the wheels next time?"']), 3000),
