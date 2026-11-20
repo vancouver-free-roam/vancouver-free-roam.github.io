@@ -429,6 +429,7 @@ function facadeMaterial() {
       vStyle = aStyle; vWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal);`);
     sh.fragmentShader = `varying float vStyle; varying vec3 vWP; varying vec3 vWN; uniform float uNight; uniform float uCitySnow;
 float fHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(mix(fHash(i), fHash(i + vec3(1,0,0)), f.x), mix(fHash(i + vec3(0,1,0)), fHash(i + vec3(1,1,0)), f.x), f.y), mix(mix(fHash(i + vec3(0,0,1)), fHash(i + vec3(1,0,1)), f.x), mix(fHash(i + vec3(0,1,1)), fHash(i + vec3(1,1,1)), f.x), f.y), f.z); }
 ` + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       float sty = floor(vStyle + 0.0001), bse = fract(vStyle + 0.0001) / 0.98 * 2000.0 - 100.0;
       // every building is a little different: a seed from its colour + where it stands
@@ -452,8 +453,24 @@ float fHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x
       // weathering: faint vertical streaks + grime near the ground (not on glass)
       float streak = fHash(vec3(floor(fU * 0.8), 1.0, sd)) * 0.5 + fHash(vec3(floor(fU * 2.3), 2.0, sd)) * 0.5;
       if (sty > 0.5 && sty < 5.5) wall *= 0.9 + 0.14 * streak - 0.12 * (1.0 - smoothstep(0.0, 1.4, rel));
+      // soft stains and sun-faded patches (smooth noise, readable from any distance), a concrete foundation strip on houses
+      if (sty > 0.5 && sty < 5.5) wall *= 0.9 + 0.17 * fNoise(vWP * 0.33 + sd * 17.0) + 0.06 * fNoise(vWP * 1.7 + sd * 5.0);
+      if (sty > 2.5 && sty < 3.5) wall = mix(wall, vec3(0.5, 0.49, 0.46), step(rel, 0.55) * fWall);
       vec3 fGl = gl * (0.75 + 0.5 * fR) + wall * 0.08;
       fGl = mix(fGl, vec3(0.55, 0.5, 0.42), fBl * 0.6);
+      float wyG = (fFl - (0.5 - P.w * 0.5)) / P.w, wxG = (fCl - (0.5 - P.z * 0.5)) / P.z;
+      if (sty > 0.5 && sty < 5.5) {
+        // glass reflects the sky (lighter towards the top of each pane) with a soft diagonal sheen
+        fGl = mix(fGl, vec3(0.42, 0.52, 0.62), clamp(wyG, 0.0, 1.0) * 0.2 * (1.0 - fBl));
+        float shn = fract(wxG * 0.7 + wyG * 0.5 + fR * 3.0); fGl += vec3(0.06, 0.07, 0.08) * smoothstep(0.3, 0.45, shn) * (1.0 - smoothstep(0.5, 0.65, shn));
+        // life behind the windows: blinds part-way down, curtains, a pot plant on the sill
+        float kind = fract(fR * 13.7);
+        if (kind < 0.22) { float bh = 0.25 + fract(fR * 31.0) * 0.5; fGl = mix(fGl, vec3(0.74, 0.7, 0.62) * (0.88 + 0.12 * step(0.5, fract(wyG * 20.0))), step(1.0 - bh, wyG)); }
+        else if (kind < 0.4) { float cw = 0.15 + fract(fR * 17.0) * 0.12, cu = clamp(step(wxG, cw) + step(1.0 - cw, wxG), 0.0, 1.0); vec3 cc = vec3(0.45 + 0.45 * fract(fR * 5.1), 0.35 + 0.4 * fract(fR * 7.3), 0.3 + 0.4 * fract(fR * 9.7)); fGl = mix(fGl, cc * 0.7, cu); }
+        else if (kind < 0.47) { float pl = step(length(vec2((wxG - 0.3) * P.z * P.y, (wyG - 0.12) * P.w * P.x)), 0.22); fGl = mix(fGl, vec3(0.12, 0.3, 0.1), pl); }
+        // panes: a glazing bar across the middle of house / brick windows
+        if (sty > 1.5 && sty < 3.5) fGl = mix(fGl, vec3(0.85, 0.84, 0.8) * (sty > 2.5 ? 1.0 : 0.25), step(abs(wyG - 0.6), 0.025) * (1.0 - step(0.9, fract(fR * 3.3))));
+      }
       // glass curtain walls: thin mullions; residential towers: balcony slabs with glass railings on every floor
       if (sty < 0.5) { float mul = step(fract(fU / 1.5), 0.05) + step(0.94, fFl); fGl = mix(fGl, vec3(0.2, 0.22, 0.24), clamp(mul, 0.0, 1.0) * fWin); }
       float balc = (sty < 1.5 && sd > 0.45 && up > 0.5) ? 1.0 : 0.0;
@@ -465,7 +482,7 @@ float fHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x
       float shopWin = 0.0;
       if (shopLevel) { float sc = fract(fU / 2.6); shopWin = step(0.35, rel) * step(rel, 3.3) * step(0.04, sc) * step(sc, 0.96) * fWall; float band = step(3.3, rel) * fWall; diffuseColor.rgb = mix(diffuseColor.rgb, wall * 0.55 + vec3(0.03), band); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.12, 0.16, 0.17) + vec3(0.06) * fR, shopWin); }
       // ---- close-up surface detail (fades with distance so it never shimmers) ----
-      float dU = fwidth(fU) + fwidth(vWP.y), nearA = 1.0 - smoothstep(0.012, 0.05, dU), nearB = 1.0 - smoothstep(0.03, 0.14, dU);
+      float dU = fwidth(fU) + fwidth(vWP.y), nearA = 1.0 - smoothstep(0.02, 0.08, dU), nearB = 1.0 - smoothstep(0.05, 0.3, dU);
       float wallOnly = fWall * (1.0 - fWin) * (1.0 - shopWin);
       // stucco / concrete / stone grain: every wall surface has a little texture
       if (sty > 0.5) { float gn = fHash(floor(vWP * 9.0) + sd) * 0.6 + fHash(floor(vWP * 2.3) + sd + 3.0) * 0.4; diffuseColor.rgb *= 1.0 + (gn - 0.5) * 0.12 * wallOnly * nearA; }
@@ -484,7 +501,7 @@ float fHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x
       }
       if (sty > 0.5 && sty < 4.5) {   // punched windows: a frame, a shadow under the lintel (the window is set back), a stone sill below
         float wy = (fFl - (0.5 - P.w * 0.5)) / P.w, wx = (fCl - (0.5 - P.z * 0.5)) / P.z;
-        float fw = 0.06 / max(P.z * P.y, 0.3), fh = 0.06 / max(P.w * P.x, 0.3);
+        float fw = 0.085 / max(P.z * P.y, 0.3), fh = 0.085 / max(P.w * P.x, 0.3);
         float frame = (step(wx, fw) + step(1.0 - fw, wx) + step(wy, fh) + step(1.0 - fh, wy) + step(abs(wx - 0.5), fw * 0.5) * step(1.2, P.z * P.y)) * fWin * (1.0 - shopWin);
         vec3 frameCol = (sty > 2.5 || sd3 > 0.55) ? vec3(0.86, 0.85, 0.82) : vec3(0.1, 0.1, 0.11);
         diffuseColor.rgb = mix(diffuseColor.rgb, frameCol, clamp(frame, 0.0, 1.0) * nearB);
@@ -878,12 +895,14 @@ export function nearestRoad(x, z, rad = 40, filter = () => true) {
 const PALMS = (() => { const [x, z] = toXZ(49.2860, -123.1420); return { x, z }; })();   // English Bay / Davie: the palm trees
 function buildCityTrees(progress) {
   const list = [];
+  // land: the city mask inside the city, and anything that isn't water outside it (Burnaby, the North Shore, Richmond, Victoria…)
+  const onLand = (x, z) => { const m = maskAt(x, z); return m === 1 || (m === -1 && !isWater(x, z) && heightAt(x, z) > 0.5); };
   // no park trees on sports pitches, courts, playgrounds or beaches (they're open ground)
   const openGrid = new Map();
   for (const a of M.areas) { if (a.line || !(a.k === 'pitch' || a.k === 'playground' || a.k === 'beach')) continue; let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (let i = 0; i < a.p.length; i += 2) { x0 = Math.min(x0, a.p[i]); x1 = Math.max(x1, a.p[i]); z0 = Math.min(z0, a.p[i + 1]); z1 = Math.max(z1, a.p[i + 1]); } for (let i = Math.floor(x0 / 100); i <= Math.floor(x1 / 100); i++) for (let j = Math.floor(z0 / 100); j <= Math.floor(z1 / 100); j++) { const k = i * 100003 + j; if (!openGrid.has(k)) openGrid.set(k, []); openGrid.get(k).push(a.p); } }
   const onOpen = (x, z) => { const l = openGrid.get(Math.floor(x / 100) * 100003 + Math.floor(z / 100)); if (!l) return false; for (const p of l) if (inPoly(x, z, p)) return true; return false; };
   const ok = (x, z) => {
-    if (maskAt(x, z) !== 1 || onOpen(x, z)) return false;
+    if (!onLand(x, z) || onOpen(x, z)) return false;
     for (const e of roadGrid.near(x, z, 6, _r)) {
       const r = M.roads[e.r], ax = NX(e.a), az = NZ(e.a), dx = NX(e.b) - ax, dz = NZ(e.b) - az, L2 = dx * dx + dz * dz || 1;
       const t = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1);
@@ -907,16 +926,60 @@ function buildCityTrees(progress) {
   };
   const offRoads = (x, z, crown) => {
     for (let it = 0; it < 4; it++) { const g = roadGap(x, z, crown, true); x = g.x; z = g.z; if (!g.moved) break; }
-    if (roadGap(x, z, 0, false).worst < 0.6 || buildingAt(x, z) || maskAt(x, z) !== 1) return null;   // trunk must be off the street
+    if (roadGap(x, z, 0, false).worst < 0.6 || buildingAt(x, z) || !onLand(x, z)) return null;   // trunk must be off the street
     return [x, z];
   };
   for (let i = 0; i < M.trees.length; i += 2) {
-    if (maskAt(M.trees[i], M.trees[i + 1]) !== 1) continue;
+    if (!onLand(M.trees[i], M.trees[i + 1])) continue;
     const s = 1.8 + Math.random() * 1.4, roll = Math.random(), palmZone = Math.hypot(M.trees[i] - PALMS.x, M.trees[i + 1] - PALMS.z) < 900;
     const k = palmZone && roll < 0.08 ? 6 : roll < 0.18 ? 3 : roll < 0.32 ? 4 : roll < 0.5 ? 5 : 1;   // cherry, columnar, broad, palm, or the usual
     const p = offRoads(M.trees[i], M.trees[i + 1], s * (k === 5 ? 0.8 : k === 4 ? 0.3 : 0.55) + 0.3); if (!p) continue;
     list.push({ x: p[0], z: p[1], y: heightAt(p[0], p[1]), s: k === 6 ? s * 0.9 : s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : k === 6 ? 3.6 : 3.3), k, r: Math.random() * 6 });
   }
+  const TT = window.__treeT = [performance.now()];
+  // boulevard trees: Vancouver's residential streets are lined with trees, but the map only has a few of them. Each street
+  // gets one species (cities plant a block at a time), a tree every ~13 m just behind the sidewalk, with gaps for driveways.
+  {
+    const have = new Set(), key = (x, z) => Math.floor(x / 7) * 100003 + Math.floor(z / 7);
+    for (const t of list) have.add(key(t.x, t.z));
+    const near = (x, z) => { const i = Math.floor(x / 7), j = Math.floor(z / 7); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (have.has((i + a) * 100003 + j + b)) return true; return false; };
+    M.roads.forEach((r, ri) => {
+      if (!hasWalk(r) || r.t < 3 || r.t > 5) return;
+      const h0 = hash2(ri, 77), h1 = hash2(77, ri);
+      if (h0 < 0.12) return;   // some streets have no trees
+      if (r.rg && townDensity(NX(r.p[0]), NZ(r.p[0])) < 0.004) return;   // out of town
+      const k = h1 < 0.22 ? 3 : h1 < 0.6 ? 1 : h1 < 0.75 ? 4 : 5, s0 = 1.6 + hash2(ri, 5) * 1.6, off = r.w / 2 + 2.6 + 1.0, step = (r.rg ? 14 : 11) + hash2(5, ri) * 5;
+      for (let i = 1; i < r.p.length; i++) {
+        const ax = NX(r.p[i - 1]), az = NZ(r.p[i - 1]), dx = NX(r.p[i]) - ax, dz = NZ(r.p[i]) - az, L = Math.hypot(dx, dz); if (L < 20) continue;
+        const ux = dx / L, uz = dz / L;
+        for (let d = 9; d < L - 9; d += step) for (const side of [-1, 1]) {
+          const x = ax + ux * d - uz * off * side, z = az + uz * d + ux * off * side;
+          if (hash2(x * 0.37, z * 0.41) < 0.3) continue;   // driveways, gaps, a missing tree
+          if (near(x, z) || !onLand(x, z) || buildingAt(x, z) || buildingAt(x + ux * 2.5, z + uz * 2.5) || buildingAt(x - ux * 2.5, z - uz * 2.5)) continue;
+          if (roadGap(x, z, 0, false).worst < 2.4) continue;   // not on a crossing street
+          const s = s0 * (0.85 + hash2(z, x) * 0.3); have.add(key(x, z));
+          list.push({ x, z, y: heightAt(x, z), s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : 3.3), k, r: hash2(x, z) * 6 });
+        }
+      }
+    });
+    TT.push(performance.now());
+    // back-yard trees: about half the houses have one (or two) in the yard: on the North Shore often a big fir or cedar
+    for (const b of M.blds) {
+      if (!(b.t === 1 || b.t === 0) || b.h > 12) continue;
+      const p = b.p; let cx = 0, cz = 0, rr = 0; for (let i = 0; i < p.length; i += 2) { cx += p[i]; cz += p[i + 1]; } cx /= p.length / 2; cz /= p.length / 2;
+      for (let i = 0; i < p.length; i += 2) rr = Math.max(rr, Math.hypot(p[i] - cx, p[i + 1] - cz)); if (rr > 16 || rr < 4) continue;
+      const hh = hash2(cx * 0.13, cz * 0.17); if (hh > 0.42) continue;
+      const north = cz < -2600, n = hh < 0.1 ? 2 : 1;
+      for (let q = 0; q < n; q++) {
+        const a = hash2(cz + q, cx) * 6.283, d = rr + 3 + hash2(cx + q, cz) * 5, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+        if (near(x, z) || !onLand(x, z) || buildingAt(x, z) || roadGap(x, z, 0, false).worst < 3) continue;
+        const roll = hash2(x, z), con = north ? roll < 0.55 : roll < 0.18, s = con ? 3 + hash2(z, x) * 2.5 : 2 + hash2(z, x) * 1.8;
+        const k = con ? [0, 7, 8][Math.floor(hash2(x + 1, z) * 3)] : roll > 0.9 ? 3 : roll > 0.7 ? 5 : 1;
+        have.add(key(x, z)); list.push({ x, z, y: heightAt(x, z), s, h: con ? s * (5 + hash2(x, z + 1) * 1.5) : s * (k === 5 ? 2.8 : 3.3), k, r: hash2(x, z) * 6 });
+      }
+    }
+  }
+  TT.push(performance.now());
   for (const a of M.areas) {
     if (!['wood', 'park', 'cemetery', 'golf'].includes(a.k) || a.line) continue;
     let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
@@ -924,6 +987,7 @@ function buildCityTrees(progress) {
     const area = (x1 - x0) * (z1 - z0), dens = a.k === 'wood' ? 1 / 110 : 1 / 650, n = Math.min(40000, Math.floor(area * dens));
     for (let k = 0; k < n; k++) {
       const x = x0 + Math.random() * (x1 - x0), z = z0 + Math.random() * (z1 - z0);
+      if (maskAt(x, z) === -1 && townDensity(x, z) < 0.004) continue;   // wild woods outside town: the forest cells (terrain.js) grow those
       if (!inPoly(x, z, a.p) || !ok(x, z)) continue;
       const wood = a.k === 'wood', con = wood ? Math.random() < 0.75 : Math.random() < 0.3;
       const s = con ? (wood ? 4 + Math.random() * 4 : 2.5 + Math.random() * 3) : 2.2 + Math.random() * 2;
@@ -933,8 +997,7 @@ function buildCityTrees(progress) {
     }
   }
   progress(`Planting ${list.length.toLocaleString()} trees…`, 0.78);
-  TREE_GEOS[3] = [TREE_GEOS[1][0], { ...TREE_GEOS[1][1], hue: 0.93, sat: 0.55, light: 0.72 }];
-  makeTreeChunks(list, TREE_GEOS, TREE_MATS);
+  TT.push(performance.now()); makeTreeChunks(list, TREE_GEOS, TREE_MATS); TT.push(performance.now());
   setColliders('trees', list.map(t => ({ x: t.x, z: t.z, r: t.k === 0 || t.k === 7 || t.k === 8 ? 0.45 : 0.3, top: t.y + t.h * 0.5, brk: t.h < 11 ? 12 : t.h < 16 ? 19 : undefined, kind: 'tip', refs: t.refs, base: t.y })));   // small street trees snap if you hit them fast
 }
 

@@ -7,7 +7,8 @@
 //  - at night, raccoon families out on their rounds (and a coyote, if you're lucky)
 import * as THREE from 'three';
 import { G, scene, hash2, inPoly, R } from './core.js';
-import { heightAt, isWater, waterLevel, maskAt, TREE_MATS } from './terrain.js';
+import { heightAt, isWater, waterLevel, maskAt, TREE_MATS, FOLIAGE } from './terrain.js';
+import { shrubGeo, detailMat, DETAIL } from './trees.js';
 import { surfaceY, buildingAt, nearestRoad } from './city.js';
 import { setColliders } from './colliders.js';
 import { ui } from './ui.js';
@@ -32,15 +33,14 @@ for (const a of M.areas) {
 
 // ---------- shapes ----------
 const hedgeGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-const bushGeo = (() => { const g = new THREE.IcosahedronGeometry(1, 1); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 0.82 + hash2(Math.round(x * 9), Math.round(z * 9 + y * 5)) * 0.3; p.setXYZ(i, x * k, y * k * 0.8 + 0.7, z * k); } g.computeVertexNormals(); return g; })();
+const bushGeo = shrubGeo(61);   // leaf-cluster cards around a shady core (trees.js), drawn with the tree foliage material
 const bloomGeo = new THREE.IcosahedronGeometry(0.16, 0);
 const logGeo = (() => { const g = new THREE.CylinderGeometry(1, 1.1, 1, 9, 1); g.rotateZ(Math.PI / 2); const p = g.attributes.position; for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + 1); return g; })();
 const rockGeo = (() => { const g = new THREE.DodecahedronGeometry(1, 1); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 0.75 + hash2(Math.round(x * 7 + 3), Math.round(y * 7 + z * 3)) * 0.45; p.setXYZ(i, x * k, Math.max(-0.3, y * k * 0.7), z * k); } g.computeVertexNormals(); return g; })();
-const leafMat = new THREE.MeshStandardMaterial({ roughness: 0.95, envMapIntensity: 0.25 });   // matte leaves (no minty sky sheen)
-leafMat.onBeforeCompile = sh => TREE_MATS[1].onBeforeCompile(sh); leafMat.customProgramCacheKey = () => 'sceneryLeaf';   // same soft leaf-cluster shading as the trees
+const leafMat = detailMat(new THREE.MeshLambertMaterial(), DETAIL.leaves, 0.9, 0.85, 'hedge');   // clipped hedges: little leaves all over (world-space texture)
 const bloomMat = new THREE.MeshStandardMaterial({ roughness: 0.7, envMapIntensity: 0.4 });
-const woodMat = new THREE.MeshStandardMaterial({ color: '#a39887', roughness: 1, flatShading: true });
-const rockMat = new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true });
+const woodMat = detailMat(new THREE.MeshStandardMaterial({ color: '#a39887', roughness: 1 }), DETAIL.rock, 0.5, 0.5, 'driftwood');   // weathered, cracked driftwood
+const rockMat = detailMat(new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), DETAIL.rock, 0.35, 0.8, 'rock');   // cracks, lichen and moss
 
 function seasonLeaf(h, c) {
   const s = G.season || 'summer';
@@ -109,7 +109,7 @@ function buildChunk(ci, cj) {
   const cols = [];
   const inst = (geo, mat, list, place, color) => { if (!list.length) return null; const m = new THREE.InstancedMesh(geo, mat, list.length); list.forEach((it, i) => { place(it); o.updateMatrix(); m.setMatrixAt(i, o.matrix); if (color) m.setColorAt(i, color(it, col)); }); m.castShadow = true; m.receiveShadow = true; m.computeBoundingSphere(); grp.add(m); return m; };
   inst(hedgeGeo, leafMat, H, ([x, z, yaw, len, ht]) => { o.position.set(x, surfaceY(x, z) - 0.05, z); o.rotation.set(0, yaw, 0); o.scale.set(1.1, ht, len); }, ([x, z], c) => c.setHSL(0.29 + hash2(x, z) * 0.05, 0.5, (G.season === 'winter' ? 0.1 : 0.13) + hash2(z, x) * 0.04));
-  inst(bushGeo, leafMat, B, ([x, z, s]) => { o.position.set(x, surfaceY(x, z) - 0.1, z); o.rotation.set(0, hash2(x, z) * 6, 0); o.scale.set(s, s * (0.8 + hash2(z, x) * 0.5), s); }, ([x, z], c) => seasonLeaf(hash2(x * 2, z * 2), c));
+  inst(bushGeo, FOLIAGE, B, ([x, z, s]) => { o.position.set(x, surfaceY(x, z) - 0.1, z); o.rotation.set(0, hash2(x, z) * 6, 0); o.scale.set(s, s * (0.8 + hash2(z, x) * 0.5), s); }, ([x, z], c) => seasonLeaf(hash2(x * 2, z * 2), c));
   const blooms = BLOOM[G.season] || []; if (blooms.length) for (const [x, z, s] of B) if (hash2(x * 5, z * 5) < 0.45) for (let q = 0; q < 7; q++) { const a = q * 0.9 + hash2(x, z) * 6, r = s * (0.55 + (q % 3) * 0.12); F.push([x + Math.cos(a) * r, z + Math.sin(a) * r, surfaceY(x, z) + s * (0.9 + (q % 2) * 0.35), blooms[Math.floor(hash2(x * 3, z * 7) * blooms.length)]]); }
   inst(bloomGeo, bloomMat, F, ([x, z, y]) => { o.position.set(x, y, z); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); }, ([, , , c], cc) => cc.set(c));
   inst(logGeo, woodMat, L, ([x, z, yaw, len, r]) => { o.position.set(x, heightAt(x, z) - r * 0.7, z); o.rotation.set(0, yaw, (hash2(x, z) - 0.5) * 0.1); o.scale.set(len, r, r); });

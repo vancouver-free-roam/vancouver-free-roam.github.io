@@ -12,9 +12,9 @@ export function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify
 
 // graphics quality: lower = faster on older computers
 export const QUALITY = {
-  low:    { name: 'Low (fastest)', ratio: 0.85, shadows: false, shadowSize: 1024, peds: 40, traffic: 14 },
-  medium: { name: 'Medium', ratio: 1, shadows: true, shadowSize: 1024, peds: 65, traffic: 22 },
-  high:   { name: 'High (prettiest)', ratio: Math.min(devicePixelRatio, 1.5), shadows: true, shadowSize: 2048, shadowRange: 120, peds: 85, traffic: 28 },
+  low:    { name: 'Low (fastest)', ratio: 0.85, shadows: false, shadowSize: 1024, peds: 40, traffic: 14, treeNear: 90 },
+  medium: { name: 'Medium', ratio: 1, shadows: true, shadowSize: 1024, peds: 65, traffic: 22, treeNear: 220 },
+  high:   { name: 'High (prettiest)', ratio: Math.min(devicePixelRatio, 1.5), shadows: true, shadowSize: 2048, shadowRange: 120, peds: 85, traffic: 28, treeNear: 420 },
 };
 let appliedSize = 2048;
 function applySettings() {
@@ -23,6 +23,6 @@ function applySettings() {
   sun.castShadow = q.shadows;
   if (q.shadowSize !== appliedSize) { appliedSize = q.shadowSize; sun.shadow.mapSize.set(q.shadowSize, q.shadowSize); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
   { const sr = q.shadowRange || 120, c = sun.shadow.camera; if (c.right !== sr) { Object.assign(c, { left: -sr, right: sr, top: sr, bottom: -sr }); c.updateProjectionMatrix(); } }   // shadows reach further on High
-  G.pedTarget = q.peds; G.trafficTarget = q.traffic;
+  G.pedTarget = q.peds; G.trafficTarget = q.traffic; G.treeNear = q.treeNear;   // how many nearby trees get the detailed version (terrain.js treeRing)
   document.getElementById('fps')?.classList.toggle('hidden', !G.settings.fps);
 }

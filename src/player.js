@@ -304,7 +304,7 @@ function buildTreeGrid() {
   for (const grp of treeChunks) for (const m of grp.children) {
     if (!m.userData.crown) continue; const { items, part, k } = m.userData;
     for (const t of items) {
-      const y0 = t.y + (part.y || 0) * t.h, y1 = y0 + part.sy * t.h, r = t.s * part.sx * 0.85, c = { x: t.x, z: t.z, y0, y1, r, cone: k === 0 || k === 2 };
+      const cr = part.crown || part, y0 = t.y + (cr.y || 0) * t.h, y1 = y0 + cr.sy * t.h, r = t.s * cr.sx * 0.85, c = { x: t.x, z: t.z, y0, y1, r, cone: k === 0 || k === 2 };
       const key = Math.floor(t.x / TG) + ',' + Math.floor(t.z / TG); if (!treeGrid.has(key)) treeGrid.set(key, []); treeGrid.get(key).push(c);
     }
   }

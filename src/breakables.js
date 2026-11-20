@@ -20,7 +20,7 @@ function hide(c) {
   const saved = [];
   for (const [m, i, ver] of c.refs || []) {
     if (i >= m.count) continue;
-    const orig = new THREE.Matrix4(); m.getMatrixAt(i, orig); saved.push([m, i, ver, orig]);
+    const orig = new THREE.Matrix4(); if (m.userData.ring) { m.userData.ring.orig(m, i, orig); m.userData.ring.setBroken(m, i, true); } else m.getMatrixAt(i, orig); saved.push([m, i, ver, orig]);   // trees near you are drawn by the detailed "near ring" (trees.js)
     m.setMatrixAt(i, ZERO); m.instanceMatrix.needsUpdate = true;
   }
   hidden.push({ c, saved, t: G.t });
@@ -35,7 +35,7 @@ function breakIt(c, dir, speed) {
   for (const [m, idx, , orig] of saved) {
     const mat = Array.isArray(m.material) ? m.material[0] : m.material, piece = new THREE.Mesh(m.geometry, mat);
     _m.makeTranslation(-base.x, -base.y, -base.z).multiply(orig); piece.matrixAutoUpdate = false; piece.matrix.copy(_m); piece.castShadow = true;
-    if (m.instanceColor) { const col = new THREE.Color(); m.getColorAt(idx, col); piece.material = mat.clone(); piece.material.color.copy(col); }
+    if (m.instanceColor) { const col = new THREE.Color(); m.getColorAt(idx, col); piece.material = mat.clone(); piece.material.color.copy(col); if (mat.onBeforeCompile) { piece.material.onBeforeCompile = mat.onBeforeCompile; piece.material.customProgramCacheKey = mat.customProgramCacheKey; } }
     g.add(piece);
   }
   const kind = c.kind || 'tip';
@@ -88,7 +88,7 @@ export function updateBreakables(dt, pl) {
   // city crews put broken things back once you're out of sight
   for (let i = hidden.length - 1; i >= 0; i--) {
     const h = hidden[i]; if (G.t - h.t < 60 || Math.hypot(h.c.x - pl.x, h.c.z - pl.z) < 150) continue;
-    for (const [m, idx, ver, orig] of h.saved) if ((m.userData.ver || 0) === ver && idx < m.count) { m.setMatrixAt(idx, orig); m.instanceMatrix.needsUpdate = true; }
+    for (const [m, idx, ver, orig] of h.saved) if ((m.userData.ver || 0) === ver && idx < m.count) { m.setMatrixAt(idx, orig); m.instanceMatrix.needsUpdate = true; m.userData.ring?.setBroken(m, idx, false); }
     h.c.gone = false; hidden.splice(i, 1);
   }
 }

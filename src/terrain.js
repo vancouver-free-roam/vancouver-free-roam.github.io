@@ -1,6 +1,7 @@
 // Terrain: real elevation (DEM), coastline land/water mask, ground texture, mountains, water, forests.
 import * as THREE from 'three';
 import { G, scene, renderer, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias } from './core.js';
+import { SPECIES_GEO, makeFoliageMat, NearRing, FOL, fernGeo, shrubGeo, logGeo, stumpGeo } from './trees.js';
 
 // ---------- elevation data ----------
 const decode = D => { const s = atob(D.b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); D.arr = new Int16Array(u.buffer); return D; };
@@ -154,6 +155,11 @@ float sNoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2
         grass = mix(grass, grass * vec3(0.8, 0.95, 0.78), smoothstep(0.62, 0.3, pt) * 0.35);      // lush, darker clover
         diffuseColor.rgb = mix(diffuseColor.rgb, grass, gr * nearG);
         diffuseColor.rgb *= 1.0 + gr * (pt - 0.5) * 0.22 * midG * (1.0 - nearG);
+        // tufts and clumps you can still see a few metres to tens of metres away (the blades above fade out early), sunny yellow-green and shady blue-green patches
+        { float tuft = sNoise(vSW.xz * 4.1) * 0.6 + sNoise(vSW.xz * 9.3) * 0.4, clump = sNoise(vSW.xz * 1.1 + 3.0), midT = 1.0 - smoothstep(0.15, 1.2, fw);
+          diffuseColor.rgb *= 1.0 + gr * ((tuft - 0.5) * 0.34 * midT * (1.0 - nearG * 0.5) + (clump - 0.5) * 0.28 * midG);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.14, 1.1, 0.78), gr * smoothstep(0.6, 0.9, clump) * 0.5);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.85, 0.95, 1.05), gr * smoothstep(0.4, 0.1, clump) * 0.4); }
         float grit = sNoise(vSW.xz * 17.0) * 0.6 + sNoise(vSW.xz * 5.0) * 0.4;
         diffuseColor.rgb *= 1.0 + (1.0 - gr) * (grit - 0.5) * 0.18 * nearG;
         // beaches: wind ripples in the dry sand, a dark wet band at the waterline and foam washing up and back
@@ -173,7 +179,7 @@ float sNoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.92, 0.96), snowA);
       ${mode === 'mountain' ? `// forest floor up close: needle litter, moss carpets and dark soil instead of lawn (below the alpine meadows)
       { float fw2 = fwidth(vSW.x) + fwidth(vSW.z), nearF = 1.0 - smoothstep(0.05, 0.5, fw2);
-        float isGreen = smoothstep(0.01, 0.05, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * (1.0 - smoothstep(1150.0, 1400.0, vSW.y)) * (1.0 - snowA);
+        float isGreen = smoothstep(0.01, 0.05, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * (1.0 - smoothstep(1150.0, 1400.0, vSW.y)) * (1.0 - snowA) * (1.0 - smoothstep(0.16, 0.26, diffuseColor.g));   // only the dark wild-forest ground, not bright town lawns
         float mo = sNoise(vSW.xz * 0.7), ne = sNoise(vSW.xz * 7.0) * 0.5 + sNoise(vSW.xz * 23.0) * 0.5;
         vec3 floorC = mix(vec3(0.15, 0.105, 0.06), vec3(0.09, 0.15, 0.045), smoothstep(0.35, 0.7, mo)) * (0.7 + 0.6 * ne);
         diffuseColor.rgb = mix(diffuseColor.rgb, floorC, isGreen * nearF * 0.85); }` : ''}
@@ -205,7 +211,7 @@ function landColor(x, z, n, dens, out) {
   const paved = smooth(0.24, 0.48, dens + (vnoise(x * 0.01, z * 0.01) - 0.5) * 0.12);
   const lush = vnoise(x * 0.006 + 40, z * 0.006), dry = vnoise(x * 0.03, z * 0.03);
   let r = 92 + lush * 22 + dry * 18, g = 128 + lush * 18 + dry * 8, b = 70 + dry * 10;   // lawns: lush green to straw
-  const yard = hash2(Math.floor(x / 14), Math.floor(z / 14));                           // each yard a little different
+  const yard = vnoise(x / 16 + 7, z / 16 - 3);                                            // each yard a little different (smooth: square patches looked like a checkerboard)
   r += (yard - 0.5) * 18; g += (yard - 0.5) * 14;
   const c = 136 + n * 28; r += (c - r) * paved; g += (c + 2 - g) * paved; b += (c - 6 - b) * paved;
   out[0] = r * (0.92 + n * 0.16); out[1] = g * (0.92 + n * 0.16); out[2] = b * (0.92 + n * 0.16); return out;
@@ -518,9 +524,14 @@ export function prebuildChunksNear(px, pz) {
 let roadFilter = () => true;
 export function setForestFilter(fn) { roadFilter = fn; }
 let pisteFilter = () => true;   // ski runs are cleared of trees (pistes.js)
-export function setPisteFilter(fn) { pisteFilter = fn; for (const m of forestCells.values()) if (m) { scene.remove(m); m.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } forestCells.clear(); }
+export function setPisteFilter(fn) { pisteFilter = fn; for (const m of forestCells.values()) dropCell(m); forestCells.clear(); }
 const forestCells = new Map(), FC = 1000;
 const forestMat = new THREE.MeshStandardMaterial({ roughness: 0.92, envMapIntensity: 0.25 });
+// realistic trees (trees.js): one textured foliage material for every tree, and the "near ring" that swaps the trees
+// within ~190 m of you to the detailed version (branches, needle sprays, leaf clusters, bark)
+export const FOLIAGE = makeFoliageMat(HAZE, WATER_T);
+export const treeRing = new NearRing(scene, FOLIAGE, 160);
+function dropCell(m) { if (!m) return; scene.remove(m); m.traverse(o => { if (o.isInstancedMesh) { treeRing.remove(o); o.dispose(); } }); }
 // a West Coast conifer (Douglas fir / cedar / hemlock): three stacked cone layers on a trunk (y 0..1, x/z -1..1)
 function firGeo() {
   const parts = [[0.12, 0.30, 0, 0.42, 0.45], [0.22, 1.0, 0.3, 0.5, 0.75], [0.16, 0.78, 0.52, 0.36, 0.58], [0.1, 0.5, 0.72, 0.28, 0.4]];   // [rTop, rBottom, y0, height, ...]
@@ -593,8 +604,9 @@ function buildForestCell(ci, cj) {
   const grp = new THREE.Group(), o = new THREE.Object3D(), col = new THREE.Color();
   for (const kind of Object.keys(L)) {
     const items = L[kind]; if (!items.length) continue;
-    const m = new THREE.InstancedMesh(kind === 'broad' ? broadGeo : FOREST_GEOS[kind], forestMat, items.length);
-    items.forEach((t, i) => {
+    const key = kind === 'broad' ? 'alder' : kind, m = new THREE.InstancedMesh(SPECIES_GEO[key].far, FOLIAGE, items.length), pos = new Float32Array(items.length * 2);
+    m.userData.pos = pos; treeRing.add(m, key, (ci + 0.5) * FC, (cj + 0.5) * FC, FC / 2);
+    items.forEach((t, i) => { pos[2 * i] = t.x; pos[2 * i + 1] = t.z;
       o.position.set(t.x, t.y, t.z); o.rotation.set((rnd() - 0.5) * 0.06, rnd() * 6.28, (rnd() - 0.5) * 0.06); o.scale.set(t.s, t.h, t.s); o.updateMatrix(); m.setMatrixAt(i, o.matrix);
       if (kind === 'broad') { const se = G.season; if (se === 'fall') col.setHSL(0.06 + rnd() * 0.08, 0.65, 0.3 + rnd() * 0.08); else if (se === 'winter') col.setHSL(0.07, 0.12, 0.24); else col.setHSL(0.24 + rnd() * 0.05, 0.45, 0.18 + rnd() * 0.06); }
       else { const [hh, ss, ll] = SPECIES[kind]; col.setHSL(hh + (rnd() - 0.5) * 0.03, ss + (rnd() - 0.5) * 0.08, ll * (0.8 + rnd() * 0.45)); if (G.season === 'winter' || t.y > snowLine()) col.lerp(SNOWC, 0.35); }
@@ -607,17 +619,13 @@ function buildForestCell(ci, cj) {
 // ---------- the forest floor right around you: sword ferns, salal, mossy fallen logs, old-growth stumps ----------
 const UG = { r: 105, x: 1e9, z: 1e9, meshes: null };
 function ugMeshes() {
-  const ferns = (() => { const parts = []; for (let i = 0; i < 9; i++) { const g = new THREE.PlaneGeometry(0.13, 0.95, 1, 3); const p = g.attributes.position; for (let k = 0; k < p.count; k++) { const y = p.getY(k) + 0.475; p.setY(k, y); p.setZ(k, -y * y * 0.35); p.setX(k, p.getX(k) * (1 - y * 0.7)); } g.rotateX(-0.75 - (i % 3) * 0.12); g.rotateY(i / 9 * Math.PI * 2 + (i % 2) * 0.3); parts.push(g.toNonIndexed()); }
-    const pos = []; for (const g of parts) pos.push(...g.attributes.position.array); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals(); return g; })();
-  const salal = (() => { const g = new THREE.SphereGeometry(0.5, 10, 7); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const k = 0.8 + hash2(Math.round(p.getX(i) * 9), Math.round(p.getZ(i) * 9 + p.getY(i) * 5)) * 0.35; p.setXYZ(i, p.getX(i) * k, Math.max(0, p.getY(i) * k * 0.75 + 0.25), p.getZ(i) * k); } g.computeVertexNormals(); return g; })();
-  const log = new THREE.CylinderGeometry(1, 1.1, 1, 9).rotateZ(Math.PI / 2);
-  const stump = (() => { const parts = [new THREE.CylinderGeometry(0.85, 1.25, 1, 10).translate(0, 0.5, 0)]; for (const a of [0.4, 2.6]) parts.push(new THREE.BoxGeometry(0.22, 0.12, 0.5).translate(Math.cos(a) * 1.0, 0.55, Math.sin(a) * 1.0)); const pos = []; for (const g of parts) pos.push(...g.toNonIndexed().attributes.position.array); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals(); return g; })();
   const mk = (geo, mat, n, sh = true) => { const m = new THREE.InstancedMesh(geo, mat, n); m.count = 0; m.castShadow = sh; m.receiveShadow = true; m.frustumCulled = false; scene.add(m); return m; };
+  // textured with the tree atlas (trees.js): arching fern fronds, leafy salal, bark-covered logs and cedar stumps
   return {
-    fern: mk(ferns, new THREE.MeshStandardMaterial({ color: '#2f5a22', roughness: 0.85, side: THREE.DoubleSide }), 4000, false),
-    salal: mk(salal, new THREE.MeshStandardMaterial({ color: '#2a4a1c', roughness: 0.6 }), 1600),
-    log: mk(log, new THREE.MeshStandardMaterial({ color: '#4a4628', roughness: 1 }), 160),
-    stump: mk(stump, new THREE.MeshStandardMaterial({ color: '#5a4630', roughness: 1 }), 120),
+    fern: mk(fernGeo(), FOLIAGE, 4000, false),
+    salal: mk(shrubGeo(), FOLIAGE, 1600),
+    log: mk(logGeo(), FOLIAGE, 160),
+    stump: mk(stumpGeo(), FOLIAGE, 120),
   };
 }
 // mapped woodland inside the city (Stanley Park, Pacific Spirit, Central Park…): a 250 m grid of 'wood' polygons
@@ -641,7 +649,7 @@ function updateUndergrowth(px, pz) {
       const sl = Math.abs(heightAt(x + 3, z) - heightAt(x - 3, z)) + Math.abs(heightAt(x, z + 3) - heightAt(x, z - 3)); if (sl > 7) continue;
       const yaw = hash2(gz * 5, gx) * 6.28;
       if (r1 < 0.36 && n.fern < 4000) { const s = 0.7 + hash2(gx + 1, gz) * 0.8; o.position.set(x, h - 0.05, z); o.rotation.set(0, yaw, 0); o.scale.set(s, s, s); o.updateMatrix(); M.fern.setMatrixAt(n.fern, o.matrix); M.fern.setColorAt(n.fern, col.setHSL(0.27 + hash2(gx, gz + 2) * 0.05, 0.5, 0.2 + hash2(gz, gx + 2) * 0.1)); n.fern++; }
-      else if (r1 < 0.5 && n.salal < 1600) { const s = 0.8 + hash2(gx + 3, gz) * 1.0; o.position.set(x, h - 0.1, z); o.rotation.set(0, yaw, 0); o.scale.set(s * 1.3, s, s * 1.3); o.updateMatrix(); M.salal.setMatrixAt(n.salal++, o.matrix); }
+      else if (r1 < 0.5 && n.salal < 1600) { const s = 0.8 + hash2(gx + 3, gz) * 1.0; o.position.set(x, h - 0.1, z); o.rotation.set(0, yaw, 0); o.scale.set(s * 1.1, s * 0.75, s * 1.1); o.updateMatrix(); M.salal.setColorAt(n.salal, col.setHSL(0.24 + hash2(gx, gz + 7) * 0.06, 0.45, 0.16 + hash2(gz + 7, gx) * 0.06)); M.salal.setMatrixAt(n.salal++, o.matrix); }
       else if (r1 > 0.993 && n.log < 160) { const L = 6 + hash2(gx, gz + 9) * 12, rr = 0.35 + hash2(gz + 9, gx) * 0.45; o.position.set(x, h + rr * 0.6, z); o.rotation.set(0, yaw, (hash2(gx + 5, gz) - 0.5) * 0.12); o.scale.set(L, rr, rr); o.updateMatrix(); M.log.setMatrixAt(n.log++, o.matrix); }
       else if (r1 > 0.986 && r1 <= 0.993 && n.stump < 120) { const s = 0.9 + hash2(gx, gz + 4) * 0.8, hh = 1.6 + hash2(gz + 4, gx) * 2.4; o.position.set(x, h - 0.2, z); o.rotation.set(0, yaw, 0); o.scale.set(s, hh, s); o.updateMatrix(); M.stump.setMatrixAt(n.stump++, o.matrix); }
     }
@@ -659,10 +667,12 @@ function updateForestCells(px, pz) {
   }
   for (const [k, m] of forestCells) {
     const [i, j] = k.split(',').map(Number), d = Math.max(Math.abs(i - ci0), Math.abs(j - cj0));
-    if (d > R + 2) { if (m) { scene.remove(m); m.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); } forestCells.delete(k); continue; }
+    if (d > R + 2) { dropCell(m); forestCells.delete(k); continue; }
     // full density close by, thinner further out (the trees are in random order, so the first N are an even sample)
-    if (m) { const f = d <= 1 ? 1 : d === 2 ? 0.32 : 0.13; for (const c of m.children) { c.count = Math.max(1, Math.floor(c.userData.full * f)); c.castShadow = d <= 1; } m.visible = d <= R; }
+    if (m) { const f = d <= 1 ? 1 : d === 2 ? 0.32 : 0.13; for (const c of m.children) { c.count = Math.max(1, Math.floor(c.userData.full * f)); c.castShadow = d <= 1; const g = SPECIES_GEO[c.userData.ringKey][d <= 1 ? 'far' : 'tiny']; if (c.geometry !== g) c.geometry = g; } m.visible = d <= R; }
   }
+  { const cap = G.treeNear ?? 420; if (cap !== treeRing.cap) { treeRing.cap = cap; treeRing.dirty = true; } }
+  treeRing.update(px, pz);
 }
 
 function makeWaterNormals() {
@@ -698,6 +708,7 @@ export function makeTreeChunks(list, geos, mats) {
       for (const part of geos[k]) {
         const m = new THREE.InstancedMesh(part.geo, mats[part.mat], sub.length);
         if (part === geos[k][geos[k].length - 1]) { m.userData.crown = true; m.userData.k = k; m.userData.items = sub; m.userData.part = part; }
+        if (part.key) { const pos = new Float32Array(sub.length * 2); sub.forEach((t, i) => { pos[2 * i] = t.x; pos[2 * i + 1] = t.z; }); m.userData.pos = pos; treeRing.add(m, part.key, grp.userData.cx, grp.userData.cz, CH / 2); }
         sub.forEach((t, i) => {
           o.position.set(t.x, t.y + (part.y || 0) * t.h, t.z); o.rotation.set(0, t.r || 0, 0);
           o.scale.set(t.s * part.sx, t.h * part.sy, t.s * part.sx); o.updateMatrix(); m.setMatrixAt(i, o.matrix); (t.refs || (t.refs = [])).push([m, i, 0]);
@@ -730,8 +741,8 @@ export function treeColor(k, t, part, out) {
 const SNOWC = new THREE.Color(0.92, 0.94, 0.97);
 export function recolorTrees() {
   // wild forest cells were coloured for the old season (snowy, fall colours…): drop them, they regrow around you in a moment
-  for (const m of forestCells.values()) if (m) { scene.remove(m); m.traverse(o => { if (o.isInstancedMesh) o.dispose(); }); }
-  forestCells.clear();
+  for (const m of forestCells.values()) dropCell(m);
+  forestCells.clear(); FOL.bare.value = G.season === 'winter' ? 1 : 0; treeRing.dirty = true;
   const c = new THREE.Color(); cherryTrees.length = 0;
   for (const grp of treeChunks) for (const m of grp.children) {
     if (!m.userData.crown) continue;
@@ -741,7 +752,9 @@ export function recolorTrees() {
   }
 }
 export function cullTreeChunks(px, pz) {
-  for (const c of treeChunks) { const d = Math.hypot(c.userData.cx - px, c.userData.cz - pz); c.visible = d < (c.userData.far || 4200); }
+  for (const c of treeChunks) { const d = Math.hypot(c.userData.cx - px, c.userData.cz - pz); c.visible = d < (c.userData.far || 4200);
+    // level of detail: the far shape out to ~1.1 km, then a tiny one (a couple of cones / one leafy ball)
+    const tiny = d > 1100; if (c.visible && c.userData.tiny !== tiny) { c.userData.tiny = tiny; for (const m of c.children) { const k = m.userData.ringKey; if (k) m.geometry = tiny ? SPECIES_GEO[k].tiny : SPECIES_GEO[k].far; } } }
 }
 // a leafy crown made of a few low-poly blobs (spans x/z -1..1, y 0..1), so trees look like trees, not one big oval
 function clumpGeo() {
@@ -764,20 +777,12 @@ function clumpGeo() {
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   return geo;
 }
-export const TREE_GEOS = [
-  [ { geo: conifer(tiersOf(5, 0.3, 0.9, 0.5, 0.15, 1.7), 0.45, { droop: 0.18, seed: 4 }), mat: 1, sx: 1, sy: 1, y: 0, hue: 0.31, sat: 0.4, light: 0.075 } ],   // Douglas fir
-  [ { geo: new THREE.CylinderGeometry(0.5, 0.7, 1, 6).translate(0, 0.5, 0), mat: 0, sx: 0.11, sy: 0.6, y: 0, hue: 0.08, sat: 0.3, light: 0.28, shadow: false },
-    { geo: clumpGeo(), mat: 1, sx: 1, sy: 0.62, y: 0.38, hue: 0.26, sat: 0.45, light: 0.3 } ],
-  [ { geo: new THREE.ConeGeometry(1, 1, 5).translate(0, 0.5, 0), mat: 1, sx: 1, sy: 1, y: 0, hue: 0.33, sat: 0.4, light: 0.15, shadow: false } ],
-];
-// more species for the city (filled in below): 3 = cherry (set by city.js), 4 = columnar (hornbeam / poplar),
-// 5 = broad maple / chestnut, 6 = windmill palm (yes, Vancouver has palm trees: English Bay, Davie Street)
-TREE_GEOS[4] = [{ ...TREE_GEOS[1][0], sy: 0.4 }, { geo: clumpGeo(), mat: 1, sx: 0.5, sy: 0.8, y: 0.2, hue: 0.27, sat: 0.45, light: 0.28 }];
-TREE_GEOS[5] = [{ ...TREE_GEOS[1][0], sx: 0.16, sy: 0.5 }, { geo: clumpGeo(), mat: 1, sx: 1.45, sy: 0.55, y: 0.36, hue: 0.25, sat: 0.5, light: 0.27 }];
-TREE_GEOS[7] = [{ geo: conifer(tiersOf(5, 0.12, 0.88, 0.62, 0.2, 1.8), 0.22, { droop: 0.32, butt: 0.11, seed: 10 }), mat: 1, sx: 1, sy: 1, y: 0, hue: 0.25, sat: 0.45, light: 0.09 }];   // western red cedar
-TREE_GEOS[8] = [{ geo: conifer(tiersOf(5, 0.2, 0.92, 0.42, 0.1, 1.6), 0.3, { droop: 0.25, seed: 14 }), mat: 1, sx: 1, sy: 1, y: 0, hue: 0.33, sat: 0.38, light: 0.065 }];   // hemlock
-TREE_GEOS[6] = [{ geo: new THREE.CylinderGeometry(0.4, 0.55, 1, 6).translate(0, 0.5, 0), mat: 0, sx: 0.09, sy: 0.85, y: 0, hue: 0.07, sat: 0.25, light: 0.2, shadow: false },
-  { geo: (() => { const parts = []; for (let i = 0; i < 9; i++) { const g = new THREE.BoxGeometry(0.16, 0.03, 0.75).translate(0, 0, 0.37); g.rotateX(0.45); g.rotateY(i / 9 * Math.PI * 2); parts.push(g.toNonIndexed()); } const pos = []; for (const g of parts) pos.push(...g.attributes.position.array); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals(); return g; })(), mat: 1, sx: 1, sy: 1, y: 0.86, hue: 0.28, sat: 0.5, light: 0.22 }];
+// every city tree kind is ONE textured mesh (trees.js): far geometry in the chunks, detailed near geometry around you
+// 0 Douglas fir, 1 leafy street/park tree, 2 subalpine fir, 3 cherry, 4 columnar (hornbeam / poplar), 5 broad maple / chestnut,
+// 6 windmill palm (yes, Vancouver has palm trees: English Bay, Davie Street), 7 western red cedar, 8 hemlock
+const sp = (key, hue, sat, light) => [{ geo: SPECIES_GEO[key].far, key, mat: 2, sx: 1, sy: 1, y: 0, hue, sat, light, crown: SPECIES_GEO[key].crown }];
+export const TREE_GEOS = [sp('douglas', 0.31, 0.4, 0.075), sp('leafy', 0.26, 0.45, 0.3), sp('subalpine', 0.33, 0.4, 0.12), sp('leafy', 0.93, 0.55, 0.72),
+  sp('columnar', 0.27, 0.45, 0.28), sp('broadmaple', 0.25, 0.5, 0.27), sp('palm', 0.28, 0.5, 0.22), sp('cedar', 0.25, 0.45, 0.09), sp('hemlock', 0.33, 0.38, 0.065)];
 export const TREE_MATS = [new THREE.MeshStandardMaterial({ roughness: 1, envMapIntensity: 0.3 }), new THREE.MeshStandardMaterial({ roughness: 0.9, envMapIntensity: 0.25 })];   // (low sky reflection: needles and leaves aren't shiny)
 // foliage: dappled clusters of leaves (light/dark speckle in world space, fading with distance) and darker undersides/insides
 TREE_MATS[1].onBeforeCompile = sh => {
@@ -795,6 +800,7 @@ TREE_MATS[1].onBeforeCompile = sh => {
       diffuseColor.rgb = mix(diffuseColor.rgb, uHaze, smoothstep(800.0, 30000.0, distance(cameraPosition, vLw)) * 0.5); }`);   // blue distance haze
 };
 forestMat.onBeforeCompile = TREE_MATS[1].onBeforeCompile;
+TREE_MATS[2] = FOLIAGE;
 
 function buildMountainForest() {
   const list = [];
