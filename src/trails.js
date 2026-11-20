@@ -124,7 +124,7 @@ function updateGrind() {
   run.x = player().x; run.z = player().z;
   const t = G.t - run.t0, mm = Math.floor(t / 60), ss = Math.floor(t % 60).toString().padStart(2, '0');
   const togo = Math.max(0, heightAt(grind.top.x, grind.top.z) - player().y);
-  ui.objective?.(`⏱️ Grouse Grind <b>${mm}:${ss}</b> · ${Math.round(togo)} m to climb`);
+  G.sideObj = `⏱️ Grouse Grind <b>${mm}:${ss}</b> · ${Math.round(togo)} m to climb`;   // (missions.js shows it; a direct ui.objective was wiped every frame)
   if (Math.hypot(player().x - grind.top.x, player().z - grind.top.z) < 30) {
     run = null; ui.objective?.(null); sfx.coin?.();
     const best = player().stats.grind; player().stats.grind = best ? Math.min(best, t) : t; player().money += 50; discover('grind');

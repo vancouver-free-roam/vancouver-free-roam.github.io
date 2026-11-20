@@ -153,7 +153,7 @@ function moveOnFoot(dt) {
     player.runT = run && (ix || iz) && player.onGround ? (player.runT || 0) + dt : run ? player.runT || 0 : 0;
     sprint = Math.min(1, Math.max(0, (player.runT - 0.8) / 1.2));
     const speed = player.swimming ? 2.4 : run ? (player.buffT > 0 ? 11.5 : 8.5) + sprint * 2.5 : (player.buffT > 0 ? 5 : 4.2);
-    let mx = camF[0] * iz + camR[0] * ix, mz = camF[1] * iz + camR[1] * ix; const ml = Math.hypot(mx, mz);
+    let mx = camF[0] * iz + camR[0] * ix, mz = camF[1] * iz + camR[1] * ix; if (player.freeze) mx = mz = 0; const ml = Math.hypot(mx, mz);   // freeze: a sports mini-game is aiming with W A S D
     if (ml > 0) { mx /= ml; mz /= ml; player.yaw += wrapAngle(Math.atan2(-mx, -mz) - player.yaw) * Math.min(1, dt * 12); }
     const k = player.onGround || player.swimming ? Math.min(1, dt * 12) : Math.min(1, dt * 2);
     player.vx = lerp(player.vx, mx * speed * (ml > 0 ? 1 : 0), k); player.vz = lerp(player.vz, mz * speed * (ml > 0 ? 1 : 0), k);
@@ -166,7 +166,7 @@ function moveOnFoot(dt) {
   if (!player.swimming) { collideBuildings(player, 0.35, player.y); collideStatic(player, 0.3, player.y + 0.3); }
   // climb: push into a wall and hold Space (any building; tall ones take a while)
   const pushed = Math.hypot(player.x - preX, player.z - preZ) > 0.001 && (ix || iz);
-  player.climbing = pushed && key('Space') && !player.board && !player.swimming;
+  player.climbing = pushed && key('Space') && !player.board && !player.swimming && !player.noJump;
   if (player.climbing) { player.vy = 3.2; player.onGround = false; m.kind = 'swim'; m.amp = 0.8; m.phase += dt * 6; if (!player.toldClimb) { player.toldClimb = true; ui.toast('🧗 Climbing!', 'Keep holding W + Space. At the top you step onto the roof. (Space in the air on the way down opens a parachute.)', 3500); } }
   // dance (X): people nearby cheer, some join in
   if (tapped('KeyX') && player.onGround) { player.danceT = 6; for (const p of peds) if (Math.hypot(p.x - player.x, p.z - player.z) < 14 && p.state === 'walk') { if (Math.random() < 0.35) { p.state = 'idle'; p.timer = 6; p.kind = 'dance'; } else if (Math.random() < 0.5) say(p, ['Woo!', 'Get it!', '🕺 Yesss', 'Who taught you that?!', 'Is this a TikTok?'][Math.floor(Math.random() * 5)], 2000); } }
@@ -190,7 +190,7 @@ function moveOnFoot(dt) {
   if (player.swimming || (isWater(player.x, player.z) && player.y <= wl + 0.3 && g2 < wl - 0.6)) {
     player.y = lerp(player.y, wl - 1.05, Math.min(1, dt * 5)); player.vy = 0; player.onGround = false;
   } else {
-    if (!player.board && !player.climbing) {
+    if (!player.board && !player.climbing && !player.noJump) {   // noJump: a sports mini-game (activities.js) owns Space
       if (key('Space') && player.onGround) player.charge = Math.min(1, (player.charge || 0) + dt);
       else if (player.charge > 0) { if (player.onGround) { player.vy = 6.4 + (player.charge > 0.15 ? player.charge * 12 : 0); player.onGround = false; takeoff(player, player.x, player.z); if (player.charge > 0.6) ui.toast(player.charge >= 1 ? '🚀 MEGA jump!' : '🦘 Super jump!', '', 900); } player.charge = 0; }
       if (tapped('Space') && !player.onGround && player.air && player.air.t > 0.12) {
@@ -227,12 +227,12 @@ function moveOnFoot(dt) {
 
   // attack with the hockey stick
   player.attackT -= dt;
-  if (G.mouse.click && player.attackT <= 0) {
+  if (G.mouse.click && player.attackT <= 0 && !player.freeze) {   // (freeze = a sports mini-game: the click is a racket swing there)
     player.attackT = 0.45; sfx.swing(); m.swing = 0;
     const hits = hitPedsInFront(player.x, player.z, player.yaw);
     if (hits) { sfx.thwack(); if (hits < 10) player.karma -= 1; }
   }
-  player.model.parts.stick.visible = player.attackT > 0 || player.inZombieZone;
+  player.model.parts.stick.visible = (player.attackT > 0 || player.inZombieZone) && !player.freeze;
   if (player.attackT > 0) m.swing = 1 - player.attackT / 0.45;   // swing progress 0..1
 }
 

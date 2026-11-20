@@ -860,6 +860,16 @@ export const SECRETS = [
   ['troll', 'Troll Toll Paid', 'You remembered 8 lanterns in a row for the troll under the Burrard Bridge.'],
   ['basement', 'The Basement', 'You found a secret arcade under a hatch in Shanghai Alley.'],
   ['trashking', 'Trash Panda King', 'You scored 1,000 in Raccoon Run.'],
+  ['holeinone', 'Hole in One!', 'You aced a hole at a real pitch & putt.'],
+  ['pitchputt', 'Weekend Golfer', 'You played a full round of pitch & putt.'],
+  ['lawnbowls', 'Bowled Over', 'You beat a club member at lawn bowls.'],
+  ['pingpong', 'Ping Pong Wizard', 'You won a game of park ping pong.'],
+  ['bowling', 'Strike a Pose', 'You beat a league regular at the bowling alley.'],
+  ['poolshark', 'Pool Shark', 'You cleared a pool table without sinking the 8 early.'],
+  ['chess', 'Grandmaster of the Park', 'You checkmated a park chess player.'],
+  ['typewriter', 'The Last Typewriter', 'You typed 30+ words per minute on the library\'s old typewriter.'],
+  ['whack', 'Raccoon Union Problem', 'You scored 300 at Whack-a-Raccoon in a Kits back lane.'],
+  ['goosechase', 'Goose Chase', 'You chased down a Canada goose and got your sandwich back.'],
   ['ufo', 'Lights Over Grouse', 'You saw a UFO over the North Shore mountains. Nobody believes you.'],
   ['backyardbear', 'Bear in the Yard', 'A black bear raided a green bin in a North Shore back yard. Lock your bins!'],
   ['hollywoodnorth', 'Hollywood North', 'You walked right into a film shoot. "CUT!"'],
@@ -937,7 +947,8 @@ export function updateMissions(dt) {
   if (active) {
     const tl = timeLeft();
     ui.objective(`<b>${active.m.title}</b><br>${active.text}${tl !== null ? `<br>⏱️ ${fmt(tl)}` : ''}${state.waypoint ? `<br><small>${Math.round(dist(state.waypoint))} m away</small>` : ''}`);
-  } else ui.objective(gigText() || (state.waypoint ? `📍 Waypoint: <b>${Math.round(dist(state.waypoint))} m</b>` : null));
+  } else ui.objective(gigText() || G.sideObj || (state.waypoint ? `📍 Waypoint: <b>${Math.round(dist(state.waypoint))} m</b>` : null));
+  G.sideObj = null;   // timers / hunts (Grouse Grind, payphone riddles, goose chase) set this every frame before updateMissions runs
   if (state.waypoint && !active && !gigActive() && dist(state.waypoint) < 25) setWaypoint(null);
 
   // mission start prompts
@@ -965,12 +976,12 @@ export function updateMissions(dt) {
   if (!prompt) prompt = liftPrompt(player);
   if (!prompt) prompt = transitPrompt(player);
   if (!prompt) prompt = minigamePrompt(player);   // before shops: the pub chalkboards sit right outside pubs that sell pints
+  if (!prompt) prompt = activityPrompt(player);   // sports courts/fields too: a café 14 m away used to hide "play tennis"
   if (!prompt) prompt = shopPrompt(player);
   if (!prompt) prompt = dtesPrompt(player);
   if (!prompt) prompt = seaPrompt(player);
   if (!prompt) prompt = snowFunPrompt(player);
   if (!prompt) prompt = slopesPrompt(player);
-  if (!prompt) prompt = activityPrompt(player);
   if (!prompt) prompt = trailsPrompt(player);
   if (!prompt) prompt = lifePrompt(player);   // city life: events, bins, cones, scooters, balls…
   if (!prompt) prompt = detailsPrompt(player);
