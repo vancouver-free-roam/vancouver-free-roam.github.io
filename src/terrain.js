@@ -1,6 +1,6 @@
 // Terrain: real elevation (DEM), coastline land/water mask, ground texture, mountains, water, forests.
 import * as THREE from 'three';
-import { G, scene, renderer, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias } from './core.js';
+import { G, scene, renderer, camera, inPoly, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias } from './core.js';
 import { SPECIES_GEO, makeFoliageMat, NearRing, FOL, fernGeo, shrubGeo, logGeo, stumpGeo } from './trees.js';
 
 // ---------- elevation data ----------
@@ -362,32 +362,134 @@ export function initTerrain(progress) {
   waterMat = new THREE.MeshStandardMaterial({ color: 0x13495a, roughness: 0.12, metalness: 0.05, normalMap: nTex, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 0.62 });
   nTex.repeat.set(4900, 4900);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(800000, 800000).rotateX(-Math.PI / 2), waterMat);
-  sea.position.x = -120000; sea.receiveShadow = true; scene.add(sea);
+  sea.position.x = -120000; sea.receiveShadow = true; scene.add(sea); seaMesh = sea;
   const lakeMat = waterMat.clone(); lakeMat.color.set(0x1d5560); lakeMat.side = THREE.DoubleSide;
-  waterShader(waterMat); waterShader(lakeMat);
+  buildShallows();
+  waterShader(waterMat, true); waterShader(lakeMat, false);
   depthBias(waterMat, -0.0004); depthBias(lakeMat, -0.0004);   // water sits a hair BEHIND ground at the same height: the shoreline no longer flickers
   for (const l of lakes) { l.mesh.material = lakeMat; scene.add(l.mesh); }
 }
 // three wave sizes in world space (swell, chop, ripples) drifting different ways, fading with distance (no far-off sparkle),
 // a touch greener in the shallows-looking near water and darker toward the horizon
 export const WATER_T = { value: 0 };
-function waterShader(mat) {
+// planar reflections (the sea at y = 0 mirrors the city, the mountains and the lights, like in Dav's reference photos):
+// every frame a mirrored camera renders the scene into a lower-resolution target; the water shader looks it up through
+// the waves and blends it in by the Fresnel law (little at your feet, a mirror toward the horizon)
+const REFL = { rt: null, on: { value: 0 }, mat: { value: new THREE.Matrix4() }, tex: { value: null }, wet: { value: 0 }, cam: new THREE.PerspectiveCamera(), checkT: 0, seen: false };
+const LAKE_OFF = { value: 0 };
+let seaMesh = null;
+// shallows: how close each bit of water is to a beach (8 m grid around every mapped beach near the city), so sunny
+// beach water turns turquoise with a sandy bottom (Kits, English Bay, Spanish Banks, Third Beach…) like in the photos
+const SHAL = { tex: { value: null }, rect: { value: new THREE.Vector4(0, 0, 1, 1) }, sun: { value: 1 } };
+function buildShallows() {
+  const beaches = window.MAP.areas.filter(a => a.k === 'beach' && !a.line && Math.abs(a.p[0]) < 40000 && Math.abs(a.p[1]) < 40000);
+  if (!beaches.length) return;
+  let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const a of beaches) for (let i = 0; i < a.p.length; i += 2) { x0 = Math.min(x0, a.p[i]); x1 = Math.max(x1, a.p[i]); z0 = Math.min(z0, a.p[i + 1]); z1 = Math.max(z1, a.p[i + 1]); }
+  const C = 8, PAD = 140; x0 -= PAD; z0 -= PAD; x1 += PAD; z1 += PAD;
+  const W = Math.ceil((x1 - x0) / C), H = Math.ceil((z1 - z0) / C), dist = new Uint8Array(W * H).fill(255), q = [];
+  for (const a of beaches) {   // beach cells = distance 0
+    let bx0 = 1e9, bz0 = 1e9, bx1 = -1e9, bz1 = -1e9; for (let i = 0; i < a.p.length; i += 2) { bx0 = Math.min(bx0, a.p[i]); bx1 = Math.max(bx1, a.p[i]); bz0 = Math.min(bz0, a.p[i + 1]); bz1 = Math.max(bz1, a.p[i + 1]); }
+    for (let j = Math.floor((bz0 - z0) / C); j <= Math.ceil((bz1 - z0) / C); j++) for (let i = Math.floor((bx0 - x0) / C); i <= Math.ceil((bx1 - x0) / C); i++) {
+      if (i < 0 || j < 0 || i >= W || j >= H) continue; const k = j * W + i; if (dist[k] === 0) continue;
+      if (inPoly(x0 + (i + 0.5) * C, z0 + (j + 0.5) * C, a.p)) { dist[k] = 0; q.push(k); }
+    }
+  }
+  const MAXD = 15;   // 15 cells = 120 m out from the sand
+  for (let h = 0; h < q.length; h++) { const k = q[h], d = dist[k]; if (d >= MAXD) continue; const i = k % W, j = (k / W) | 0;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue; const kk = jj * W + ii; if (dist[kk] > d + 1) { dist[kk] = d + 1; q.push(kk); } } }
+  const data = new Uint8Array(W * H); for (let k = 0; k < W * H; k++) data[k] = dist[k] > MAXD ? 0 : Math.round(255 * (1 - dist[k] / MAXD));
+  const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat, THREE.UnsignedByteType); tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+  SHAL.tex.value = tex; SHAL.rect.value.set(x0, z0, W * C, H * C);
+}
+function waterShader(mat, refl) {
+  const on = refl ? REFL.on : LAKE_OFF;
   mat.onBeforeCompile = sh => {
-    sh.uniforms.uWT = WATER_T;
-    sh.vertexShader = 'varying vec3 vWw;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vWw = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    sh.fragmentShader = 'varying vec3 vWw; uniform float uWT;\n' + sh.fragmentShader.replace('#include <normal_fragment_maps>', `
+    sh.uniforms.uWT = WATER_T; sh.uniforms.uReflOn = on; sh.uniforms.uReflMat = REFL.mat; sh.uniforms.tRefl = REFL.tex; sh.uniforms.uWet = REFL.wet;
+    sh.uniforms.tShal = SHAL.tex; sh.uniforms.uShalRect = SHAL.rect; sh.uniforms.uSunny = SHAL.sun;
+    sh.vertexShader = 'varying vec3 vWw; varying vec4 vRefl; uniform mat4 uReflMat;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vWw = (modelMatrix * vec4(transformed, 1.0)).xyz; vRefl = uReflMat * vec4(vWw, 1.0);');
+    sh.fragmentShader = 'varying vec3 vWw; varying vec4 vRefl; uniform float uWT, uReflOn, uWet, uSunny; uniform sampler2D tRefl, tShal; uniform vec4 uShalRect; vec3 gWn = vec3(0.0, 1.0, 0.0); float gShal = 0.0;\n' + sh.fragmentShader.replace('#include <normal_fragment_maps>', `
         { float wd = distance(cameraPosition, vWw), fine = 1.0 - smoothstep(25.0, 160.0, wd), mid = 1.0 - smoothstep(250.0, 2500.0, wd);
           vec2 n1 = texture2D(normalMap, vWw.xz / 140.0 + vec2(uWT * 0.006, uWT * 0.004)).xy * 2.0 - 1.0;
           vec2 n2 = texture2D(normalMap, vWw.xz / 37.0 * mat2(0.8, -0.6, 0.6, 0.8) + vec2(-uWT * 0.014, uWT * 0.009)).xy * 2.0 - 1.0;
           vec2 n3 = texture2D(normalMap, vWw.xz / 11.0 * mat2(0.34, 0.94, -0.94, 0.34) + vec2(uWT * 0.035, -uWT * 0.022)).xy * 2.0 - 1.0;
           vec2 sl = (n1 * 0.8 + n2 * 0.45 * mid + n3 * 0.22 * fine) * normalScale.x;
           vec3 wn = normalize(vec3(sl.x, 1.0, sl.y));   // the water is flat: build the normal straight in world space
-          normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz); }`)
+          gWn = wn; normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        { float wd2 = distance(cameraPosition, vWw); diffuseColor.rgb = mix(diffuseColor.rgb * vec3(0.92, 1.12, 1.04), diffuseColor.rgb * 0.85, smoothstep(30.0, 900.0, wd2)); }`);
+        { float wd2 = distance(cameraPosition, vWw); diffuseColor.rgb = mix(diffuseColor.rgb * vec3(0.92, 1.12, 1.04), diffuseColor.rgb * 0.85, smoothstep(30.0, 900.0, wd2));
+          // beach shallows: turquoise, then a sandy bottom showing through right at the waterline (sunny days only)
+          vec2 suv = (vWw.xz - uShalRect.xy) / uShalRect.zw;
+          if (suv.x > 0.0 && suv.y > 0.0 && suv.x < 1.0 && suv.y < 1.0) gShal = texture2D(tShal, suv).r;
+          float tq = smoothstep(0.0, 0.7, gShal) * (0.35 + 0.65 * uSunny);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.11, 0.46, 0.47), tq * 0.85);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.58, 0.5), smoothstep(0.78, 1.0, gShal) * 0.6 * (0.4 + 0.6 * uSunny)); }`)
+      .replace('#include <opaque_fragment>', `
+        if (uReflOn > 0.5 && vRefl.w > 0.0) {
+          vec3 V = normalize(cameraPosition - vWw);
+          float F = 0.02 + 0.98 * pow(1.0 - clamp(dot(V, gWn), 0.0, 1.0), 5.0);
+          float wd3 = distance(cameraPosition, vWw);
+          vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.5, gWn.z) * (0.022 + 0.06 * uWet) * (1.0 - smoothstep(300.0, 5000.0, wd3) * 0.75);   // calm water = a nearly clean mirror, stretched a little up and down like real ripples
+          vec3 rc = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
+          float k = clamp(F * 1.25 + 0.06, 0.0, 0.9) * (1.0 - 0.45 * uWet) * (1.0 - 0.45 * gShal * uSunny);   // you see INTO shallow beach water
+          outgoingLight = mix(outgoingLight, rc, k);
+        }
+        #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'water3';
+  mat.customProgramCacheKey = () => refl ? 'water4r' : 'water4';
 }
+const _rm = new THREE.Matrix4(), _la = new THREE.Vector3(), _pl = new THREE.Plane(), _cl = new THREE.Vector4(), _q = new THREE.Vector4(), _o = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _ray = new THREE.Vector3(), _bs = new THREE.Vector2();
+const reflScale = () => { if (REFL.disabled) return 0; const q = G.settings?.quality || 'high'; return q === 'low' ? 0 : q === 'medium' ? 0.33 : 0.5; };
+function seaInView(cam) {   // does any of a 5 × 4 grid of screen rays land on the sea within 25 km?
+  if (cam.position.y < 0.2) return false;
+  for (const x of [-0.9, -0.45, 0, 0.45, 0.9]) for (const y of [-0.9, -0.5, -0.1, 0.25]) {
+    _ray.set(x, y, 0.5).unproject(cam).sub(cam.position).normalize(); if (_ray.y > -1e-4) continue;
+    const t = -cam.position.y / _ray.y; if (t > 25000) continue;
+    const wx = cam.position.x + _ray.x * t, wz = cam.position.z + _ray.z * t; if (isWater(wx, wz) && waterLevel(wx, wz) === 0) return true;
+  }
+  return false;
+}
+export function updateReflection(cam) {
+  const sc = reflScale(); if (!seaMesh || !sc) { REFL.on.value = 0; return; }
+  cam.updateMatrixWorld();
+  REFL.checkT -= G.dt || 0.016; if (REFL.checkT < 0) { REFL.checkT = 0.3; REFL.seen = seaInView(cam); }
+  if (!REFL.seen) { REFL.on.value = 0; return; }
+  REFL.frame = (REFL.frame || 0) + 1; if (REFL.on.value && REFL.frame % 2 && !REFL.force) return;   // every other frame (the ripples hide the lag); the texture keeps the camera it was drawn with
+  REFL.force = false;
+  renderer.getDrawingBufferSize(_bs); const w = Math.max(64, Math.round(_bs.x * sc)), h = Math.max(64, Math.round(_bs.y * sc));
+  if (!REFL.rt) { REFL.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType }); REFL.tex.value = REFL.rt.texture; }
+  else if (REFL.rt.width !== w || REFL.rt.height !== h) REFL.rt.setSize(w, h);
+  // the mirror camera: position, view direction and "up" all flipped through the water plane
+  const vc = REFL.cam, cp = cam.position;
+  _rm.extractRotation(cam.matrixWorld); _la.set(0, 0, -1).applyMatrix4(_rm).add(cp); _la.y = -_la.y;
+  vc.position.set(cp.x, -cp.y, cp.z); vc.up.set(0, 1, 0).applyMatrix4(_rm); vc.up.y = -vc.up.y; vc.lookAt(_la);
+  vc.fov = cam.fov; vc.aspect = cam.aspect; vc.near = cam.near; vc.far = Math.min(cam.far, 60000); vc.updateProjectionMatrix(); vc.updateMatrixWorld();
+  REFL.mat.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(vc.projectionMatrix).multiply(vc.matrixWorldInverse);
+  // oblique near plane = the water surface, so nothing below the water ends up in the reflection
+  _pl.setFromNormalAndCoplanarPoint(_up, _o.set(0, 0, 0)).applyMatrix4(vc.matrixWorldInverse);
+  _cl.set(_pl.normal.x, _pl.normal.y, _pl.normal.z, _pl.constant);
+  const P = vc.projectionMatrix.elements; _q.set((Math.sign(_cl.x) + P[8]) / P[0], (Math.sign(_cl.y) + P[9]) / P[5], -1, (1 + P[10]) / P[14]);
+  _cl.multiplyScalar(2 / _cl.dot(_q)); P[2] = _cl.x; P[6] = _cl.y; P[10] = _cl.z + 1; P[14] = _cl.w; vc.projectionMatrixInverse.copy(vc.projectionMatrix).invert();
+  vc.layers.mask = cam.layers.mask;
+  // small things (people, street props, signs, small vehicles) barely show in a rippled reflection but cost ~half the
+  // draw calls: they're skipped in this pass (the list is refreshed once a second)
+  REFL.listT = (REFL.listT || 0) - (G.dt || 0.016);
+  if (REFL.listT < 0 || !REFL.hide) { REFL.listT = 1; REFL.hide = []; scene.traverse(o => {
+    if (o.isPoints) { REFL.hide.push(o); return; }   // stars, rain and sparkles read as dust on the water
+    if (o === seaMesh || !(o.isMesh || o.isSprite)) return;
+    if (o.isSprite) { if (o.scale.x < 20) REFL.hide.push(o); return; }
+    const g = o.geometry; if (!g) return; if (!g.boundingSphere) g.computeBoundingSphere(); const r = g.boundingSphere.radius;
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    if (/^road|curb/.test(m?.customProgramCacheKey?.() || '')) { REFL.hide.push(o); return; }   // flat streets, paths and curbs don't show in a reflection
+    if (o.isInstancedMesh) { if (r < 4 && !TREE_MATERIALS.has(m)) REFL.hide.push(o); return; }
+    if (r * Math.max(o.scale.x, o.scale.y, o.scale.z) < 5 && !TREE_MATERIALS.has(m)) REFL.hide.push(o);
+  }); }
+  const hid = []; for (const o of REFL.hide) if (o.visible) { o.visible = false; hid.push(o); }
+  const old = renderer.getRenderTarget(), sAuto = renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate = false; seaMesh.visible = false;
+  renderer.setRenderTarget(REFL.rt); renderer.render(scene, vc); renderer.setRenderTarget(old);
+  seaMesh.visible = true; renderer.shadowMap.autoUpdate = sAuto; for (const o of hid) o.visible = true;
+  REFL.wet.value = Math.min(1, G.wet || 0); REFL.on.value = 1;
+}
+export const _refl = REFL;   // for tests
 
 // ---------- terrain tiles with two levels of detail ----------
 const UNION = { x0: Math.min(DEM_RECT.x0, DEM2_RECT.x0), z0: Math.min(DEM_RECT.z0, DEM2_RECT.z0), x1: Math.max(DEM_RECT.x1, DEM2_RECT.x1), z1: Math.max(DEM_RECT.z1, DEM2_RECT.z1) };
@@ -690,7 +792,9 @@ function makeWaterNormals() {
   });
 }
 export function updateWater(dt) { WATER_T.value += dt;
-  { const n = G.night || 0, c = G.cloud || 0; HAZE.value.setRGB(0.46 - 0.04 * c, 0.6 - 0.12 * c, 0.82 - 0.26 * c).multiplyScalar(1 - 0.88 * n); /* clear-day mountains fade into soft sky blue */ } if (waterMat) { waterMat.normalMap.offset.x += dt * 0.004; waterMat.normalMap.offset.y += dt * 0.0025; } }
+  { const n = G.night || 0, c = G.cloud || 0; HAZE.value.setRGB(0.46 - 0.04 * c, 0.6 - 0.12 * c, 0.82 - 0.26 * c).multiplyScalar(1 - 0.88 * n); /* clear-day mountains fade into soft sky blue */ } if (waterMat) { waterMat.normalMap.offset.x += dt * 0.004; waterMat.normalMap.offset.y += dt * 0.0025; const ns = 0.2 + 0.3 * Math.min(1, (G.wet || 0) + 0.5 * (G.cloud || 0) * (G.cloud || 0)); waterMat.normalScale.setScalar(waterMat.normalScale.x + (ns - waterMat.normalScale.x) * Math.min(1, dt)); }   // glassy on calm clear days, choppier in wind and rain
+  SHAL.sun.value = Math.max(0, 1 - (G.cloud || 0) * 1.2 - (G.wet || 0)) * (1 - (G.night || 0));
+  updateReflection(camera); }   // (main.js calls updateWater after the camera has moved for this frame)
 
 // ---------- chunked instanced trees (so far-away chunks can be skipped) ----------
 export const treeChunks = [];
@@ -784,6 +888,7 @@ const sp = (key, hue, sat, light) => [{ geo: SPECIES_GEO[key].far, key, mat: 2, 
 export const TREE_GEOS = [sp('douglas', 0.31, 0.4, 0.075), sp('leafy', 0.26, 0.45, 0.3), sp('subalpine', 0.33, 0.4, 0.12), sp('leafy', 0.93, 0.55, 0.72),
   sp('columnar', 0.27, 0.45, 0.28), sp('broadmaple', 0.25, 0.5, 0.27), sp('palm', 0.28, 0.5, 0.22), sp('cedar', 0.25, 0.45, 0.09), sp('hemlock', 0.33, 0.38, 0.065)];
 export const TREE_MATS = [new THREE.MeshStandardMaterial({ roughness: 1, envMapIntensity: 0.3 }), new THREE.MeshStandardMaterial({ roughness: 0.9, envMapIntensity: 0.25 })];   // (low sky reflection: needles and leaves aren't shiny)
+const TREE_MATERIALS = new Set([FOLIAGE, forestMat, ...TREE_MATS]);   // trees always show in the water's reflection (updateReflection)
 // foliage: dappled clusters of leaves (light/dark speckle in world space, fading with distance) and darker undersides/insides
 TREE_MATS[1].onBeforeCompile = sh => {
   sh.vertexShader = 'varying vec3 vLw; varying float vLn;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n#ifdef USE_INSTANCING\n mat4 lM = modelMatrix * instanceMatrix;\n#else\n mat4 lM = modelMatrix;\n#endif\n vLw = (lM * vec4(transformed, 1.0)).xyz; vLn = normalize(mat3(lM) * objectNormal).y;');
