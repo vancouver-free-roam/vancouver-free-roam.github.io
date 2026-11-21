@@ -21,7 +21,8 @@ export function renderWorld() {
   if ((G.settings?.quality || 'high') !== 'high') { renderer.render(scene, camera); return; }
   if (!composer) setup();
   composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight);
-  const n = G.night || 0; bloom.strength = 0.12 + 0.54 * n * (1 - 0.75 * SKY_LOOK.gold.value); bloom.threshold = 1.4 - 0.72 * n;   // by day only really bright things glow (the sun, sun glints): a lower threshold made the whole bright sky bloom into a white haze over everything bloom.radius = 0.4 + 0.2 * n;
+  const n = G.night || 0; bloom.strength = 0.12 + 0.54 * n * (1 - 0.75 * SKY_LOOK.gold.value); bloom.threshold = 1.4 - 0.72 * n; bloom.radius = 0.4 + 0.2 * n;
+  // (by day only really bright things glow: the sun, sun glints. A lower threshold made the whole bright sky bloom into a white haze over everything)
   composer.render();
 }
 
