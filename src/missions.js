@@ -789,6 +789,7 @@ export const SECRETS = [
   ['bigspender', 'Big Spender', 'You spent $5,000 in Vancouver. That\'s roughly two months of rent for a closet.'],
   ['clevelanddam', 'Cleveland Dam', 'The 91 m concrete dam holding back Capilano Lake, the drinking water for half of Metro Vancouver. Walk across the crest and watch the spillway roar.'],
   ['bloedel', 'Into the Jungle', 'You walked into the Bloedel Conservatory, the bubble dome on top of Little Mountain: a tropical rainforest with free-flying parrots, in the middle of Vancouver.'],
+  ['chandelier', 'The Spinning Chandelier', 'You stood under the giant crystal chandelier hanging beneath the Granville Bridge, right beside Vancouver House, the tower that starts as a triangle and ends as a rectangle. A few times a day it drops, lights up and spins.'],
   ['eastvan', 'East Van Cross', 'Ken Lum\'s glowing "Monument for East Vancouver": EAST down, VAN across. Pure East Van pride (best seen from the SkyTrain at night).'],
   ['taxiride', 'Backseat Passenger', 'You took a taxi and survived the driver\'s opinions on hockey.'],
   ['bus', 'Thank You, Driver!', 'You rode a TransLynx bus and said thank you at the back door, like every polite Vancouverite.'],

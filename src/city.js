@@ -435,7 +435,7 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
       // every building is a little different: a seed from its colour + where it stands
       float sd = fHash(floor(diffuseColor.rgb * 255.0) + vec3(floor(bse * 0.7), 3.0, 1.0)), sd2 = fract(sd * 7.31), sd3 = fract(sd * 3.17);
       vec4 P; vec3 gl; vec2 gm;
-      if (sty < 0.5)      { P = vec4(3.4 + sd3 * 0.6, 1.5, 0.9, 0.82); gl = mix(vec3(0.10, 0.22, 0.26), vec3(0.16, 0.2, 0.24), sd2); gm = vec2(0.04, 0.95); }   // glass tower
+      if (sty < 0.5)      { P = vec4(3.4 + sd3 * 0.6, 1.5, 0.9, 0.82); gl = sd2 < 0.55 ? mix(vec3(0.05, 0.2, 0.2), vec3(0.06, 0.16, 0.25), sd2 / 0.55) : mix(vec3(0.07, 0.2, 0.16), vec3(0.1, 0.16, 0.22), (sd2 - 0.55) / 0.45); gm = vec2(0.04, 0.95); }   // glass tower: green-teal to blue (reflections take this tint)
       else if (sty < 1.5) { P = vec4(3.0 + sd3 * 0.5, 2.6 + sd2 * 1.4, 0.45 + sd * 0.3, 0.45 + sd2 * 0.2); gl = vec3(0.08, 0.11, 0.13); gm = vec2(0.10, 0.70); }   // concrete
       else if (sty < 2.5) { P = vec4(3.6 + sd3 * 0.5, 2.6 + sd * 1.2, 0.38 + sd2 * 0.2, 0.5 + sd * 0.15); gl = vec3(0.07, 0.08, 0.09); gm = vec2(0.15, 0.50); }   // brick
       else if (sty < 3.5) { P = vec4(2.9 + sd3 * 0.3, 3.2 + sd * 1.8, 0.28 + sd2 * 0.12, 0.38 + sd * 0.1); gl = vec3(0.09, 0.10, 0.11); gm = vec2(0.20, 0.40); }   // house
@@ -560,7 +560,7 @@ const LANDMARK_LOOK = [
   [/^Scotia Tower$/, { c: '#4f4a46', s: 0 }], [/^TD Tower$|^Royal Centre$/, { c: '#2c2f34', s: 0 }],      // dark granite / black glass towers
   [/^Bentall [1-5]/, { c: '#dcd8d0', s: 1 }],                                                             // white precast + dark windows
   [/^One Wall Centre$|^Wall Centre$/, { c: '#566d82', s: 0 }], [/^MNP Tower$/, { c: '#5f7f9f', s: 0 }],
-  [/^Vancouver House$/, { c: '#cdd6da', s: 0 }], [/^Telus Garden/, { c: '#9fb8c0', s: 0 }], [/^Jameson House$/, { c: '#8aa6a9', s: 0 }],
+  [/^Vancouver House$/, { c: '#cdd6da', s: 0 }], [/^Hyatt Vancouver Downtown Alberni$|^Living Shangri-La$|^Shangri-La/, { c: '#5f95a6', s: 0 }],   // (OSM names Living Shangri-La's 201 m tower after the hotel inside) [/^Telus Garden/, { c: '#9fb8c0', s: 0 }], [/^Jameson House$/, { c: '#8aa6a9', s: 0 }],
   [/Harbour Centre/, { c: '#b8b2a6', s: 1 }], [/^BC Hydro$/, { c: '#8fa3a8', s: 1 }],                     // concrete tower; the Electra's blue-grey tile
   [/^Orpheum$/, { c: '#e0d0b0', s: 2 }], [/^Vogue Theatre$/, { c: '#d8d3c8', s: 1 }],
   [/^Sylvia Hotel$/, { c: '#8a4a35', s: 2 }],                                                             // ivy-covered red-brown brick
@@ -587,7 +587,7 @@ function lookFor(b, cx, cz) {
 // Vancouver-flavoured palettes: painted wooden houses, stucco/brick walk-ups, teal-green glass towers
 const PAL = {
   // (colour pass: still realistic, but the stucco, paint and cladding you really see around Vancouver, not all beige)
-  glass: ['#7fb3b4', '#5f9ea6', '#9cc6c8', '#4f8a99', '#a9cfd4', '#7ea6c4', '#c3dde0', '#6b98b8', '#5c8f88', '#8fb8cf'],
+  glass: ['#4f9095', '#3d7f86', '#6aa6aa', '#38708a', '#7fb3b8', '#4f7fa8', '#5e9a9c', '#46799a', '#4a8a7c', '#5f93b0', '#3f7b74', '#6d9fb5'],   // the deep teal / blue-green "Vancouver glass"
   apartment: ['#e3c99a', '#c98a6a', '#a9c4c8', '#efe0bf', '#a0573a', '#9fb894', '#d4a373', '#e8c76a', '#c99a9a', '#f1e7d0', '#88a9c3', '#b7c99a', '#e7a98c', '#7d9fa0', '#d9b8d0', '#f2d48a'],
   stone: ['#c2b49a', '#a99d86', '#d1c3a6', '#9e9584', '#b8a27f'],
   roof: ['#45484d', '#3a3633', '#5b4636', '#8a3b2e', '#3f5f4c', '#4b5f7a', '#6b5544', '#2f3236', '#9a5a3c', '#55585c', '#2f5f6b', '#7a2f2f'],
