@@ -69,6 +69,28 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
 
 // ---------- sky, sun, moon ----------
 const sky = new Sky(); sky.scale.setScalar(80000); scene.add(sky);
+// three's Sky brightens its colour with its own gamma curve (pow 1/2.4) and the renderer then applies sRGB again: the
+// double brightening drained the blue (a pale, whitish sky). Undo it with uSkyPow and set brightness with uSkyGain,
+// so clear days are deep blue overhead and paler at the horizon, like the reference photos (VANCOUVER_LOOK.md §1)
+// At golden hour / blue hour (uGold) the sky is tinted like the photos: orange toward the sun, pink along the horizon,
+// purple-blue higher up (the raw model goes olive-teal at low sun)
+export const SKY_LOOK = { pow: { value: 1.9 }, gain: { value: 1 }, gold: { value: 0 }, dusk: { value: 0 }, night: { value: 0 } };   // pow = colour saturation of the sky
+sky.material.uniforms.uSkyPow = SKY_LOOK.pow; sky.material.uniforms.uSkyGain = SKY_LOOK.gain; sky.material.uniforms.uGold = SKY_LOOK.gold; sky.material.uniforms.uDusk = SKY_LOOK.dusk; sky.material.uniforms.uNightSky = SKY_LOOK.night;
+sky.material.fragmentShader = 'uniform float uSkyPow; uniform float uSkyGain; uniform float uGold; uniform float uDusk; uniform float uNightSky;\n' + sky.material.fragmentShader.replace(/gl_FragColor = vec4\( retColor, 1\.0 \);/, `float skyLum = dot( retColor, vec3( 0.2126, 0.7152, 0.0722 ) );
+      vec3 col = max( vec3( 0.0 ), vec3( skyLum ) + ( retColor - vec3( skyLum ) ) * uSkyPow ) * uSkyGain;   // more colour, same brightness (uSkyPow = saturation)
+      { float hgt = clamp( direction.y, 0.0, 1.0 ), horizon = 1.0 - smoothstep( 0.0, 0.42, hgt );
+        vec2 dh = normalize( direction.xz + 1e-5 ), sh = normalize( vSunDirection.xz + 1e-5 ); float al = max( 0.0, dot( dh, sh ) );
+        // golden hour: the raw model goes dark and olive away from a low sun; real sunset skies keep glowing:
+        // a pink band low down (orange toward the sun), purple-blue higher up
+        vec3 warm = mix( vec3( 0.95, 0.4, 0.55 ), vec3( 1.15, 0.5, 0.18 ), al * al );
+        vec3 high = vec3( 0.22, 0.26, 0.62 );
+        col += mix( high, warm, horizon ) * uGold * 0.4;
+        col = mix( col, col * vec3( 1.06, 0.92, 1.0 ), uGold * 0.5 );
+        // blue hour (sun just below the horizon): deep saturated blue with a last pink band low down
+        float dl = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) ); col = mix( col, vec3( dl ) * vec3( 0.5, 0.74, 1.65 ), uDusk * 0.7 * ( 1.0 - horizon * horizon * 0.6 ) );   // the raw model turns violet at dusk: steer it to deep blue
+        col = mix( col, vec3( dl ) * vec3( 0.42, 0.6, 1.5 ), uNightSky * 0.85 );   // and brownish at night: dark navy instead
+        col += mix( vec3( 0.03, 0.08, 0.38 ), vec3( 0.4, 0.22, 0.34 ), horizon * horizon * 0.8 ) * uDusk * 0.35; }
+      gl_FragColor = vec4( col, 1.0 );`);
 const envSky = new Sky(); envSky.scale.setScalar(1000);
 const envScene = new THREE.Scene(); envScene.add(envSky);
 envScene.add(new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x34444c, side: THREE.BackSide })));
@@ -163,6 +185,11 @@ export function updateSky(focus) {
     u.sunPosition.value.copy(sunDir); u.turbidity.value = 2.4 + gold * 4.5 + cloud * 9; u.rayleigh.value = Math.max(0.3, 2.8 + gold * 1.4 + G.night - grey * 1.6); u.mieCoefficient.value = 0.003 + gold * 0.006 + cloud * 0.02; u.mieDirectionalG.value = 0.82 - cloud * 0.2;
   }
   sky.position.copy(camera.position);   // the sky travels with you (the map is 100 km long!)
+  SKY_LOOK.gold.value = smooth(14, 1, elev) * smooth(-2, 0.5, elev) * (1 - cloud);   // golden hour (sun 14° … 0°)
+  SKY_LOOK.dusk.value = smooth(1, -3, elev) * smooth(-11, -5, elev) * (1 - cloud);    // blue hour (sun 0° … -10°)
+  SKY_LOOK.gain.value = 0.88 + 0.12 * (SKY_LOOK.gold.value + SKY_LOOK.dusk.value);
+  SKY_LOOK.night.value = smooth(-7, -13, elev);   // full night (sun 13° below)
+  SKY_LOOK.pow.value = (1.9 - 1.1 * Math.min(1, cloud * 1.3)) * (1 - SKY_LOOK.night.value) + SKY_LOOK.night.value;   // vivid on clear days, plain grey under overcast, plain at night
   const day = 1 - G.night;
   sun.intensity = 4.3 * smooth(-2, 10, elev) * (1 - 0.7 * grey - 0.12 * cloud);   // (with the lower exposure below: deeper sky, same bright ground)
   sun.color.setHSL(0.075 + 0.04 * smooth(2, 30, elev), (0.95 - 0.55 * smooth(5, 35, elev)) * (1 - cloud * 0.6), 0.55 + 0.38 * smooth(0, 25, elev));   // warm gold-orange low, soft white high

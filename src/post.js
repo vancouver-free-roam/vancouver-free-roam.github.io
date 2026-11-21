@@ -5,7 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { G, renderer, scene, camera, sun, R } from './core.js';
+import { G, renderer, scene, camera, sun, R, SKY_LOOK } from './core.js';
 import { heightAt } from './terrain.js';
 
 let composer = null, bloom = null;
@@ -21,7 +21,7 @@ export function renderWorld() {
   if ((G.settings?.quality || 'high') !== 'high') { renderer.render(scene, camera); return; }
   if (!composer) setup();
   composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight);
-  const n = G.night || 0; bloom.strength = 0.16 + 0.5 * n; bloom.threshold = 0.86 - 0.18 * n; bloom.radius = 0.4 + 0.2 * n;
+  const n = G.night || 0; bloom.strength = 0.12 + 0.54 * n * (1 - 0.75 * SKY_LOOK.gold.value); bloom.threshold = 1.4 - 0.72 * n;   // by day only really bright things glow (the sun, sun glints): a lower threshold made the whole bright sky bloom into a white haze over everything bloom.radius = 0.4 + 0.2 * n;
   composer.render();
 }
 
@@ -69,11 +69,13 @@ function updateWisps(dt) {
   }
 }
 const col = new THREE.Color();
-const _white = new THREE.Color(1, 1, 1);
+const _white = new THREE.Color(1, 1, 1), _pink = new THREE.Color(1.0, 0.6, 0.55), _dusk = new THREE.Color(0.42, 0.42, 0.64);
 export function updateCumulus(dt) {
   updateWisps(dt);
   const cover = G.cloud || 0, amount = Math.max(0, 1 - Math.abs(cover - 0.32) * 2.2) * (1 - (G.wet || 0)), night = G.night || 0;   // most at "partly cloudy" (a few even on sunny days)
-  col.copy(sun.color).lerp(_white, 0.38).multiplyScalar(1 - night * 0.8);   // bright white at noon, glowing gold-pink at sunset
+  col.copy(sun.color).lerp(_white, 0.38);   // bright white at noon…
+  col.lerp(_pink, SKY_LOOK.gold.value * 0.85).lerp(_dusk, SKY_LOOK.dusk.value * 0.8);   // …glowing pink-orange at sunset, dusky purple-pink in the blue hour (like the photos)
+  col.multiplyScalar(1 - night * 0.8 + SKY_LOOK.dusk.value * 0.35);
   for (const m of clouds) {
     const u = m.userData; u.ox += dt * 6 * u.drift; if (u.ox > 22000) u.ox -= 44000;   // a westerly breeze
     m.position.set(camera.position.x + u.ox, u.y, camera.position.z + u.oz);
