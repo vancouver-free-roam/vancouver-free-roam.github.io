@@ -1,6 +1,6 @@
 // Terrain: real elevation (DEM), coastline land/water mask, ground texture, mountains, water, forests.
 import * as THREE from 'three';
-import { G, scene, renderer, camera, inPoly, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias } from './core.js';
+import { G, scene, renderer, camera, inPoly, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias, SKY_LOOK } from './core.js';
 import { SPECIES_GEO, makeFoliageMat, NearRing, FOL, fernGeo, shrubGeo, logGeo, stumpGeo } from './trees.js';
 
 // ---------- elevation data ----------
@@ -131,11 +131,26 @@ export const isSnow = (x, z, h = heightAt(x, z)) => h > snowLine() + (vnoise(x *
 export const SNOW_U = { line: { value: 930 }, city: { value: 0 } };
 // aerial perspective: far ridges fade into a cool blue-grey (greyer under cloud, dark at night) — set in updateWater
 export const HAZE = { value: new THREE.Color(0.42, 0.52, 0.64) };
+// Aerial perspective, done AFTER lighting (like real air, it adds its own light): nearer ridges sink into a deep blue-green
+// "ridge blue", the farthest ones fade into the pale horizon haze (`uHaze`), and high peaks poke out above it (thin air):
+// layered blue mountains like the photos. (Mixing a pale haze into the ground colour BEFORE lighting made every sunny
+// slope a washed-out mint.) Colours are radiance before tone mapping; updateWater converts them from screen colours.
+export const HAZE_U = { uRidge: { value: new THREE.Color(0.05, 0.08, 0.12) }, uRidgeK: { value: 0.6 }, uAlpen: { value: new THREE.Color(0, 0, 0) } };
+export const AERIAL_GLSL = `uniform vec3 uRidge; uniform float uRidgeK;
+vec3 aerial(vec3 c, vec3 wp) { float d = distance(cameraPosition, wp), alt = exp(-max(wp.y, 0.0) / 2000.0);
+  c = mix(c, uRidge, smoothstep(400.0, 15000.0, d) * uRidgeK * (0.45 + 0.55 * alt));
+  return mix(c, uHaze, smoothstep(7000.0, 90000.0, d) * 0.88 * alt); }
+`;
+export function aerialShader(sh, wp) {   // after addSnowShader-style setup: haze the final colour before tone mapping
+  sh.uniforms.uRidge = HAZE_U.uRidge; sh.uniforms.uRidgeK = HAZE_U.uRidgeK; sh.uniforms.uHaze = HAZE;
+  sh.fragmentShader = sh.fragmentShader.replace('#include <tonemapping_fragment>', `gl_FragColor.rgb = aerial(gl_FragColor.rgb, ${wp});\n#include <tonemapping_fragment>`);
+}
 export function addSnowShader(mat, mode) {
   mat.onBeforeCompile = sh => {
-    sh.uniforms.uSnowLine = SNOW_U.line; sh.uniforms.uCitySnow = SNOW_U.city; sh.uniforms.uHaze = HAZE; sh.uniforms.uWT = WATER_T;
+    sh.uniforms.uSnowLine = SNOW_U.line; sh.uniforms.uCitySnow = SNOW_U.city; sh.uniforms.uHaze = HAZE; sh.uniforms.uWT = WATER_T; sh.uniforms.uAlpen = HAZE_U.uAlpen; sh.uniforms.uRidge = HAZE_U.uRidge; sh.uniforms.uRidgeK = HAZE_U.uRidgeK;
     sh.vertexShader = 'varying vec3 vSW;\nvarying vec3 vSN;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vSW = (modelMatrix * vec4(transformed, 1.0)).xyz; vSN = normalize(mat3(modelMatrix) * objectNormal);');
-    sh.fragmentShader = `varying vec3 vSW; varying vec3 vSN; uniform float uSnowLine; uniform float uCitySnow; uniform vec3 uHaze; uniform float uWT;
+    sh.fragmentShader = `varying vec3 vSW; varying vec3 vSN; uniform float uSnowLine; uniform float uCitySnow; uniform vec3 uHaze; uniform float uWT; uniform vec3 uAlpen;
+${AERIAL_GLSL}
 float sHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float sNoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f); return mix(mix(sHash(i), sHash(i + vec2(1.0, 0.0)), u.x), mix(sHash(i + vec2(0.0, 1.0)), sHash(i + vec2(1.0, 1.0)), u.x), u.y); }
 ` + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
@@ -173,17 +188,29 @@ float sNoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2
           float foam = smoothstep(0.1, 0.0, abs(vSW.y - wash + 0.02)) * (0.55 + 0.45 * sNoise(vSW.xz * vec2(2.5, 2.5) + uWT * 0.3));
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.95, 0.96), foam * sandy * 0.85);
         } }
+      ${mode === 'mountain' ? `// from a few km away the North Shore's yards and lower slopes read as dark tree canopy (the trees themselves aren't drawn that far)
+      { float gF = smoothstep(0.01, 0.06, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)), farC = smoothstep(1500.0, 6000.0, distance(cameraPosition, vSW));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.055, 0.095, 0.05) * (0.75 + 0.5 * dn), gF * farC * 0.6); }` : ''}
       float sn =sNoise(vSW.xz * 0.004) * 0.6 + sNoise(vSW.xz * 0.05) * 0.4;
-      float snowA = ${mode === 'mountain' ? 'smoothstep(uSnowLine - 60.0, uSnowLine + 60.0, vSW.y + (sn - 0.5) * 200.0) * smoothstep(0.45, 0.72, vSN.y)' : '0.0'};
+      // (the big peaks above ~2100 m — Baker, Garibaldi, the Olympics, the Tantalus glaciers — keep snow all year)
+      float snowA = ${mode === 'mountain' ? 'smoothstep(min(uSnowLine, 2100.0) - 60.0, min(uSnowLine, 2100.0) + 60.0, vSW.y + (sn - 0.5) * 200.0) * smoothstep(0.42, 0.68, vSN.y + smoothstep(1800.0, 2600.0, vSW.y) * 0.15)' : '0.0'};
       snowA = max(snowA, uCitySnow * smoothstep(0.7, 0.92, vSN.y) * smoothstep(0.2, 0.5, sn) * step(0.5, vSW.y));
-      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.92, 0.96), snowA);
+      vec3 snowC = vec3(0.9, 0.92, 0.96);
+      ${mode === 'mountain' ? `// snowy forest below the tree line: from afar it's white speckled with dark tree tops ("snow ghosts"), not a clean sheet
+      { float trees = 1.0 - smoothstep(1250.0, 1650.0, vSW.y + (sn - 0.5) * 250.0);
+        float spk = sNoise(vSW.xz * 0.21) * 0.55 + sNoise(vSW.xz * 0.9) * 0.45;
+        snowC = mix(snowC, vec3(0.2, 0.25, 0.24), trees * (0.18 + 0.42 * smoothstep(0.35, 0.8, spk))); }` : ''}
+      diffuseColor.rgb = mix(diffuseColor.rgb, snowC, snowA);
       ${mode === 'mountain' ? `// forest floor up close: needle litter, moss carpets and dark soil instead of lawn (below the alpine meadows)
       { float fw2 = fwidth(vSW.x) + fwidth(vSW.z), nearF = 1.0 - smoothstep(0.05, 0.5, fw2);
         float isGreen = smoothstep(0.01, 0.05, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * (1.0 - smoothstep(1150.0, 1400.0, vSW.y)) * (1.0 - snowA) * (1.0 - smoothstep(0.16, 0.26, diffuseColor.g));   // only the dark wild-forest ground, not bright town lawns
         float mo = sNoise(vSW.xz * 0.7), ne = sNoise(vSW.xz * 7.0) * 0.5 + sNoise(vSW.xz * 23.0) * 0.5;
         vec3 floorC = mix(vec3(0.15, 0.105, 0.06), vec3(0.09, 0.15, 0.045), smoothstep(0.35, 0.7, mo)) * (0.7 + 0.6 * ne);
         diffuseColor.rgb = mix(diffuseColor.rgb, floorC, isGreen * nearF * 0.85); }` : ''}
-      diffuseColor.rgb = mix(diffuseColor.rgb, uHaze, smoothstep(500.0, 24000.0, distance(cameraPosition, vSW)) * 0.62);   // aerial perspective`);
+      `).replace('#include <tonemapping_fragment>', `${mode === 'mountain' ? `// alpenglow: at sunset and just after, the high snowfields (Baker, the Lions, Garibaldi) glow pink
+      gl_FragColor.rgb += uAlpen * snowA * smoothstep(400.0, 1800.0, vSW.y) * (0.5 + 0.5 * smoothstep(-0.2, 0.6, vSN.y - vSN.x * 0.3));   // (west faces catch the last light)` : ''}
+      gl_FragColor.rgb = aerial(gl_FragColor.rgb, vSW);   // aerial perspective (layered blue ridges)
+      #include <tonemapping_fragment>`);
   };
   return mat;
 }
@@ -631,7 +658,7 @@ const forestCells = new Map(), FC = 1000;
 const forestMat = new THREE.MeshStandardMaterial({ roughness: 0.92, envMapIntensity: 0.25 });
 // realistic trees (trees.js): one textured foliage material for every tree, and the "near ring" that swaps the trees
 // within ~190 m of you to the detailed version (branches, needle sprays, leaf clusters, bark)
-export const FOLIAGE = makeFoliageMat(HAZE, WATER_T);
+export const FOLIAGE = makeFoliageMat(HAZE, WATER_T, { glsl: AERIAL_GLSL, apply: aerialShader });
 export const treeRing = new NearRing(scene, FOLIAGE, 160);
 function dropCell(m) { if (!m) return; scene.remove(m); m.traverse(o => { if (o.isInstancedMesh) { treeRing.remove(o); o.dispose(); } }); }
 // a West Coast conifer (Douglas fir / cedar / hemlock): three stacked cone layers on a trunk (y 0..1, x/z -1..1)
@@ -791,8 +818,29 @@ function makeWaterNormals() {
     ctx.putImageData(img, 0, 0);
   });
 }
+// Haze colours are chosen as SCREEN colours (what you'd pick from a photo) and turned into the light level that comes out as
+// that colour after exposure + ACES tone mapping, so the far ridges really end up that colour on screen.
+const _scr = new THREE.Color(), _tmp = new THREE.Color();
+function aces(v) { return (v * (v + 0.0245786) - 0.000090537) / (v * (0.983729 * v + 0.432951) + 0.238081); }
+function toRadiance(out, r, g, b) {
+  const e = renderer.toneMappingExposure / 0.6, inv = s => { const L = Math.min(0.98, s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4); let lo = 0, hi = 60; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; aces(m) < L ? lo = m : hi = m; } return lo / e / 1.12; };
+  return out.setRGB(inv(r), inv(g), inv(b));
+}
+function updateHaze() {
+  const n = G.night || 0, c = Math.min(1, G.cloud || 0), gold = SKY_LOOK.gold.value, dusk = SKY_LOOK.dusk.value;
+  // far haze: pale sky blue on clear days, soft grey under cloud, peach-pink at sunset, deep blue at dusk
+  _scr.setRGB(0.66, 0.76, 0.88).lerp(_tmp.setRGB(0.66, 0.68, 0.71), c).lerp(_tmp.setRGB(0.86, 0.66, 0.62), gold * 0.6).lerp(_tmp.setRGB(0.3, 0.36, 0.55), dusk * 0.8).multiplyScalar(1 - 0.86 * n);
+  toRadiance(HAZE.value, _scr.r, _scr.g, _scr.b);
+  // ridge blue: the deep blue-green of the nearer North Shore ridges (purple-blue at sunset)
+  _scr.setRGB(0.24, 0.35, 0.47).lerp(_tmp.setRGB(0.4, 0.43, 0.46), c).lerp(_tmp.setRGB(0.38, 0.32, 0.45), gold * 0.55).lerp(_tmp.setRGB(0.13, 0.17, 0.3), dusk * 0.8).multiplyScalar(1 - 0.88 * n);
+  toRadiance(HAZE_U.uRidge.value, _scr.r, _scr.g, _scr.b);
+  HAZE_U.uRidgeK.value = 0.78 + 0.12 * c;
+  // alpenglow on the snow: pink at sunset, fading on through the blue hour
+  const a = (gold * 0.9 + dusk * 0.45) * (1 - c * 0.85) * (1 - n);
+  HAZE_U.uAlpen.value.setRGB(1.0, 0.36, 0.5).multiplyScalar(a * 2.0);
+}
 export function updateWater(dt) { WATER_T.value += dt;
-  { const n = G.night || 0, c = G.cloud || 0; HAZE.value.setRGB(0.46 - 0.04 * c, 0.6 - 0.12 * c, 0.82 - 0.26 * c).multiplyScalar(1 - 0.88 * n); /* clear-day mountains fade into soft sky blue */ } if (waterMat) { waterMat.normalMap.offset.x += dt * 0.004; waterMat.normalMap.offset.y += dt * 0.0025; const ns = 0.2 + 0.3 * Math.min(1, (G.wet || 0) + 0.5 * (G.cloud || 0) * (G.cloud || 0)); waterMat.normalScale.setScalar(waterMat.normalScale.x + (ns - waterMat.normalScale.x) * Math.min(1, dt)); }   // glassy on calm clear days, choppier in wind and rain
+  updateHaze(); if (waterMat) { waterMat.normalMap.offset.x += dt * 0.004; waterMat.normalMap.offset.y += dt * 0.0025; const ns = 0.2 + 0.3 * Math.min(1, (G.wet || 0) + 0.5 * (G.cloud || 0) * (G.cloud || 0)); waterMat.normalScale.setScalar(waterMat.normalScale.x + (ns - waterMat.normalScale.x) * Math.min(1, dt)); }   // glassy on calm clear days, choppier in wind and rain
   SHAL.sun.value = Math.max(0, 1 - (G.cloud || 0) * 1.2 - (G.wet || 0)) * (1 - (G.night || 0));
   updateReflection(camera); }   // (main.js calls updateWater after the camera has moved for this frame)
 
@@ -893,7 +941,7 @@ const TREE_MATERIALS = new Set([FOLIAGE, forestMat, ...TREE_MATS]);   // trees a
 TREE_MATS[1].onBeforeCompile = sh => {
   sh.vertexShader = 'varying vec3 vLw; varying float vLn;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n#ifdef USE_INSTANCING\n mat4 lM = modelMatrix * instanceMatrix;\n#else\n mat4 lM = modelMatrix;\n#endif\n vLw = (lM * vec4(transformed, 1.0)).xyz; vLn = normalize(mat3(lM) * objectNormal).y;');
   sh.uniforms.uHaze = HAZE;
-  sh.fragmentShader = 'varying vec3 vLw; varying float vLn; uniform vec3 uHaze;\nfloat lHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }\n'
+  sh.fragmentShader = 'varying vec3 vLw; varying float vLn; uniform vec3 uHaze;\n' + AERIAL_GLSL + 'float lHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }\n'
     + 'float lNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(mix(lHash(i), lHash(i + vec3(1,0,0)), f.x), mix(lHash(i + vec3(0,1,0)), lHash(i + vec3(1,1,0)), f.x), f.y), mix(mix(lHash(i + vec3(0,0,1)), lHash(i + vec3(1,0,1)), f.x), mix(lHash(i + vec3(0,1,1)), lHash(i + vec3(1,1,1)), f.x), f.y), f.z); }\n'
     + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
     { float fw = fwidth(vLw.x) + fwidth(vLw.y), nr = 1.0 - smoothstep(0.03, 0.25, fw);
@@ -901,8 +949,8 @@ TREE_MATS[1].onBeforeCompile = sh => {
       float l1 = lNoise(vLw * 3.4), l2 = lNoise(vLw * 0.85 + 7.0);
       diffuseColor.rgb *= mix(1.0, 0.72 + 0.5 * l1, nr) * (0.86 + 0.28 * l2);
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 1.06, 0.78), (l2 - 0.5) * 0.6);
-      diffuseColor.rgb *= 0.6 + 0.4 * smoothstep(-0.7, 0.7, vLn);
-      diffuseColor.rgb = mix(diffuseColor.rgb, uHaze, smoothstep(800.0, 30000.0, distance(cameraPosition, vLw)) * 0.5); }`);   // blue distance haze
+      diffuseColor.rgb *= 0.6 + 0.4 * smoothstep(-0.7, 0.7, vLn); }`);
+  aerialShader(sh, 'vLw');   // blue distance haze, same as the ground
 };
 forestMat.onBeforeCompile = TREE_MATS[1].onBeforeCompile;
 TREE_MATS[2] = FOLIAGE;

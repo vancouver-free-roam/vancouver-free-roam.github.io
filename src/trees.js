@@ -347,7 +347,7 @@ SPECIES_GEO.palm.tiny = SPECIES_GEO.palm.far;
 
 // ---------- the foliage material ----------
 export const FOL = { bare: { value: 0 }, time: null, haze: null };
-export function makeFoliageMat(HAZE, TIME) {
+export function makeFoliageMat(HAZE, TIME, AER) {
   FOL.time = TIME; FOL.haze = HAZE;
   // Lambert (not PBR): leaves are matte anyway, and in dense woods it saves ~5 ms a frame (measured in Stanley Park)
   const m = new THREE.MeshLambertMaterial({ map: ATLAS, alphaTest: 0.42, side: THREE.DoubleSide });
@@ -366,7 +366,7 @@ export function makeFoliageMat(HAZE, TIME) {
           transformed.x += sw * 0.022 * h2; transformed.z += cos(uTime * 0.9 + ph) * 0.012 * h2;
           if (aT > 2.5 && aT < 3.5 || aT < 0.5) { float fl = sin(uTime * 7.0 + position.x * 40.0 + position.z * 31.0 + ph); transformed += normal * fl * 0.006; } }`)
       .replace('#include <project_vertex>', '#include <project_vertex>\n#ifdef USE_INSTANCING\n mat4 lM = modelMatrix * instanceMatrix;\n#else\n mat4 lM = modelMatrix;\n#endif\n vLw = (lM * vec4(transformed, 1.0)).xyz; vLn = normalize(mat3(lM) * objectNormal).y;');
-    sh.fragmentShader = 'varying float vT; varying vec3 vLw; varying float vLn; uniform vec3 uHaze; uniform float uBare; uniform vec3 uSunC; uniform float uSunI;\n' + sh.fragmentShader
+    sh.fragmentShader = 'varying float vT; varying vec3 vLw; varying float vLn; uniform vec3 uHaze; uniform float uBare; uniform vec3 uSunC; uniform float uSunI;\n' + (AER ? AER.glsl : '') + sh.fragmentShader
       // sunlight glowing through the leaves: crowns on the shady side stay green instead of going black
       .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.indirectDiffuse += diffuseColor.rgb * uSunC * uSunI * (vT > 0.5 && vT < 1.5 ? 0.025 : 0.085);')
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n#ifdef DOUBLE_SIDED\n normal *= faceDirection;\n#endif\n')   // foliage keeps its soft crown normals on both sides
@@ -385,10 +385,11 @@ export function makeFoliageMat(HAZE, TIME) {
             if (vT > 3.5 && vT < 4.5) diffuseColor.rgb *= 0.7;   // the inside of a crown is shady
             diffuseColor.rgb *= 0.62 + 0.38 * smoothstep(-0.7, 0.8, vLn);   // undersides darker
           }
-          diffuseColor.rgb = mix(diffuseColor.rgb, uHaze, smoothstep(800.0, 30000.0, dist) * 0.5); }
-        #include <alphatest_fragment>`);
+          if (AER_OFF) diffuseColor.rgb = mix(diffuseColor.rgb, uHaze, smoothstep(800.0, 30000.0, dist) * 0.5); }
+        #include <alphatest_fragment>`.replace('AER_OFF', AER ? 'false' : 'true'));
+    if (AER) AER.apply(sh, 'vLw');   // blue distance haze after lighting, same as the ground
   };
-  m.customProgramCacheKey = () => 'foliage-v2';
+  m.customProgramCacheKey = () => 'foliage-v3';
   return m;
 }
 
