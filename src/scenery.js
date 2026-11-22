@@ -39,7 +39,7 @@ const logGeo = (() => { const g = new THREE.CylinderGeometry(1, 1.1, 1, 9, 1); g
 const rockGeo = (() => { const g = new THREE.DodecahedronGeometry(1, 1); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 0.75 + hash2(Math.round(x * 7 + 3), Math.round(y * 7 + z * 3)) * 0.45; p.setXYZ(i, x * k, Math.max(-0.3, y * k * 0.7), z * k); } g.computeVertexNormals(); return g; })();
 const leafMat = detailMat(new THREE.MeshLambertMaterial(), DETAIL.leaves, 0.9, 0.85, 'hedge');   // clipped hedges: little leaves all over (world-space texture)
 const bloomMat = new THREE.MeshStandardMaterial({ roughness: 0.7, envMapIntensity: 0.4 });
-const woodMat = detailMat(new THREE.MeshStandardMaterial({ color: '#a39887', roughness: 1 }), DETAIL.rock, 0.5, 0.5, 'driftwood');   // weathered, cracked driftwood
+const woodMat = detailMat(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1 }), DETAIL.rock, 0.5, 0.6, 'driftwood');   // weathered, cracked driftwood (colour per log)
 const rockMat = detailMat(new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), DETAIL.rock, 0.35, 0.8, 'rock');   // cracks, lichen and moss
 
 function seasonLeaf(h, c) {
@@ -76,12 +76,28 @@ function buildChunk(ci, cj) {
   for (const { a, x0: ax0, z0: az0, x1: ax1, z1: az1 } of areaBy.get(k) || []) {
     const px0 = Math.max(ax0, x0), px1 = Math.min(ax1, x0 + CH), pz0 = Math.max(az0, z0), pz1 = Math.min(az1, z0 + CH);
     if (a.k === 'beach') {
-      for (let x = px0; x < px1; x += 6) for (let z = pz0; z < pz1; z += 6) {
-        if (hash2(x * 0.7, z * 1.1) > 0.3 || !inPoly(x, z, a.p) || isWater(x, z)) continue;
-        // logs sit near the back of the beach, roughly parallel to the water line
-        let wa = null; for (let b = 0; b < 6.28; b += 0.52) if (isWater(x + Math.cos(b) * 25, z + Math.sin(b) * 25)) { wa = b; break; }
-        if (wa === null || isWater(x + Math.cos(wa) * 9, z + Math.sin(wa) * 9)) continue;
-        L.push([x + R(-1, 1), z + R(-1, 1), wa + Math.PI / 2 + (hash2(z, x) - 0.5) * 0.5, 5 + hash2(x, z) * 7, 0.28 + hash2(x + 1, z) * 0.3]);
+      // Vancouver's beach logs lie in long ROWS parallel to the water (the Park Board lines them up as seats and windbreaks).
+      // Beach outlines don't follow the waterline, so: a 2 m distance-to-water map over this chunk (chamfer transform),
+      // then logs laid greedily in bands 9 / 13.5 / 18 / 22.5 m from the water, each lined up with the shore
+      if (px1 > px0 && pz1 > pz0) {
+        const cs = 2, pad = 30, gx0 = px0 - pad, gz0 = pz0 - pad, GW = Math.ceil((px1 - px0 + 2 * pad) / cs) + 1, GH = Math.ceil((pz1 - pz0 + 2 * pad) / cs) + 1;
+        const D = new Float32Array(GW * GH).fill(1e6);
+        for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) if (isWater(gx0 + i * cs, gz0 + j * cs)) D[j * GW + i] = 0;
+        const S2 = 1.414;
+        for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) { const k = j * GW + i; let d = D[k]; if (i) d = Math.min(d, D[k - 1] + 1); if (j) { d = Math.min(d, D[k - GW] + 1); if (i) d = Math.min(d, D[k - GW - 1] + S2); if (i < GW - 1) d = Math.min(d, D[k - GW + 1] + S2); } D[k] = d; }
+        for (let j = GH - 1; j >= 0; j--) for (let i = GW - 1; i >= 0; i--) { const k = j * GW + i; let d = D[k]; if (i < GW - 1) d = Math.min(d, D[k + 1] + 1); if (j < GH - 1) { d = Math.min(d, D[k + GW] + 1); if (i < GW - 1) d = Math.min(d, D[k + GW + 1] + S2); if (i) d = Math.min(d, D[k + GW - 1] + S2); } D[k] = d; }
+        const ROWS = [9, 13.5, 18, 22.5], placed = ROWS.map(() => []);
+        for (let j = 1; j < GH - 1; j++) for (let i = 1; i < GW - 1; i++) {
+          const x = gx0 + i * cs, z = gz0 + j * cs; if (x < px0 || x >= px1 || z < pz0 || z >= pz1) continue;
+          const k = j * GW + i, dw = D[k] * cs; if (dw > 26 || dw < 7) continue;
+          const r = ROWS.findIndex(R => Math.abs(dw - R) < 0.9); if (r < 0) continue;
+          if (placed[r].some(([px, pz]) => Math.hypot(px - x, pz - z) < 10.5)) continue;
+          if (hash2(x * 0.31, z * 0.57) < 0.12 || !inPoly(x, z, a.p) || roadNear(x, z, 2) || buildingAt(x, z)) continue;
+          const gxd = D[k + 1] - D[k - 1], gzd = D[k + GW] - D[k - GW], gl = Math.hypot(gxd, gzd); if (gl < 0.3) continue;   // shore normal from the distance map
+          const tx = -gzd / gl, tz = gxd / gl;
+          placed[r].push([x, z]);
+          L.push([x, z, Math.atan2(-tz, tx) + (hash2(x, z) - 0.5) * 0.12, 7.5 + hash2(z, x) * 2.5, 0.32 + hash2(x + 1, z) * 0.26]);
+        }
       }
     } else if (a.k === 'rock') {
       for (let x = px0; x < px1; x += 5) for (let z = pz0; z < pz1; z += 5) if (hash2(x, z) < 0.3 && inPoly(x, z, a.p) && !roadNear(x, z, 3.5)) K.push([x, z, 0.6 + hash2(z, x) * 1.6]);
@@ -112,11 +128,12 @@ function buildChunk(ci, cj) {
   inst(bushGeo, FOLIAGE, B, ([x, z, s]) => { o.position.set(x, surfaceY(x, z) - 0.1, z); o.rotation.set(0, hash2(x, z) * 6, 0); o.scale.set(s, s * (0.8 + hash2(z, x) * 0.5), s); }, ([x, z], c) => seasonLeaf(hash2(x * 2, z * 2), c));
   const blooms = BLOOM[G.season] || []; if (blooms.length) for (const [x, z, s] of B) if (hash2(x * 5, z * 5) < 0.45) for (let q = 0; q < 7; q++) { const a = q * 0.9 + hash2(x, z) * 6, r = s * (0.55 + (q % 3) * 0.12); F.push([x + Math.cos(a) * r, z + Math.sin(a) * r, surfaceY(x, z) + s * (0.9 + (q % 2) * 0.35), blooms[Math.floor(hash2(x * 3, z * 7) * blooms.length)]]); }
   inst(bloomGeo, bloomMat, F, ([x, z, y]) => { o.position.set(x, y, z); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); }, ([, , , c], cc) => cc.set(c));
-  inst(logGeo, woodMat, L, ([x, z, yaw, len, r]) => { o.position.set(x, heightAt(x, z) - r * 0.7, z); o.rotation.set(0, yaw, (hash2(x, z) - 0.5) * 0.1); o.scale.set(len, r, r); });
+  inst(logGeo, woodMat, L, ([x, z, yaw, len, r]) => { o.position.set(x, heightAt(x, z) - r * 0.5, z); o.rotation.set(0, yaw, (hash2(x, z) - 0.5) * 0.06); o.scale.set(len, r, r); },
+    ([x, z], c) => c.setHSL(0.07 + hash2(x, z) * 0.04, 0.14 + hash2(z, x) * 0.2, 0.26 + hash2(x * 3, z) * 0.2));   // silver-grey to warm brown, each log its own
   inst(rockGeo, rockMat, K, ([x, z, s]) => { o.position.set(x, heightAt(x, z) - s * 0.2, z); o.rotation.set(hash2(x, z), hash2(z, x) * 6, 0); o.scale.set(s, s, s * (0.8 + hash2(x + 2, z) * 0.4)); }, ([x, z], c) => c.setHSL(0.08 + hash2(x, z) * 0.05, 0.06 + hash2(z, x) * 0.06, 0.28 + hash2(x * 3, z) * 0.14));
   scene.add(grp);
   // you bump into logs and boulders (sit on a log by jumping on it)
-  const colls = []; for (const [x, z, yaw, len, r] of L) for (const s of [-0.35, 0, 0.35]) colls.push({ x: x + Math.cos(yaw) * len * s, z: z - Math.sin(yaw) * len * s, r: r + 0.25, top: heightAt(x, z) + r * 1.3 });
+  const colls = []; for (const [x, z, yaw, len, r] of L) for (const s of [-0.35, 0, 0.35]) colls.push({ x: x + Math.cos(yaw) * len * s, z: z - Math.sin(yaw) * len * s, r: r + 0.25, top: heightAt(x, z) + r * 1.5 });   // (the log spans 0..2r and is sunk 0.5 r into the sand)
   for (const [x, z, s] of K) if (s > 0.9) colls.push({ x, z, r: s * 0.8, top: heightAt(x, z) + s * 0.7 });
   grp.userData.colls = colls;
   return grp;

@@ -29,6 +29,14 @@ function pip(x, z, p) { let ins = false; for (let i = 0, j = p.length - 2; i < p
 const lakeGrid = new Map(), LG = 1000;
 for (const l of lakes) for (let i = Math.floor(l.x0 / LG); i <= Math.floor(l.x1 / LG); i++) for (let j = Math.floor(l.z0 / LG); j <= Math.floor(l.z1 / LG); j++) { const k = i + ',' + j; if (!lakeGrid.has(k)) lakeGrid.set(k, []); lakeGrid.get(k).push(l); }
 export function lakeAt(x, z) { const a = lakeGrid.get(Math.floor(x / LG) + ',' + Math.floor(z / LG)); if (a) for (const l of a) if (x > l.x0 && x < l.x1 && z > l.z0 && z < l.z1 && pip(x, z, l.p)) return l; return null; }
+// a hand-built body of water (Kits Pool): swimmable through waterLevel/isWater like a lake, but not in `lakes`
+// (so no lake mesh, reflection or far-hiding logic touches it). l = { p: flat outline, y: water level }
+export function addWaterBody(l) {
+  let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (let i = 0; i < l.p.length; i += 2) { x0 = Math.min(x0, l.p[i]); x1 = Math.max(x1, l.p[i]); z0 = Math.min(z0, l.p[i + 1]); z1 = Math.max(z1, l.p[i + 1]); }
+  Object.assign(l, { x0, z0, x1, z1, name: l.name || '' });
+  for (let i = Math.floor(x0 / LG); i <= Math.floor(x1 / LG); i++) for (let j = Math.floor(z0 / LG); j <= Math.floor(z1 / LG); j++) { const k = i + ',' + j; if (!lakeGrid.has(k)) lakeGrid.set(k, []); lakeGrid.get(k).unshift(l); }
+  return l;
+}
 // height of the water surface here (sea = 0, or the lake's level)
 export function waterLevel(x, z) { const l = lakeAt(x, z); return l ? l.y : 0; }
 
@@ -248,7 +256,7 @@ function treeShade(g, R, s) {   // darker, cooler ground under the street trees
   for (let i = 0; i < T.length; i += 2) { const x = T[i], z = T[i + 1]; if (x < R.x0 || x > R.x1 || z < R.z0 || z > R.z1) continue; g.beginPath(); g.arc((x - R.x0) * s, (z - R.z0) * s, (2.6 + hash2(x, z) * 1.8) * s, 0, 7); g.fill(); }
 }
 // ---------- ground texture for the city ----------
-const AREA_COL = { park: '#6c9850', grass: '#7a9c58', wood: '#3a3a24', pitch: '#4f9a45', playground: '#c4a479', golf: '#7fb062', beach: '#e2d2a3', cemetery: '#6d8f55', industrial: '#8d8a83', rail: '#7d776c', pier: '#9b968c', aero: '#8a8a8a', rock: '#8c8a84' };
+const AREA_COL = { park: '#6c9850', grass: '#7a9c58', wood: '#3a3a24', pitch: '#4f9a45', playground: '#c4a479', golf: '#7fb062', beach: '#d6c49a', cemetery: '#6d8f55', industrial: '#8d8a83', rail: '#7d776c', pier: '#9b968c', aero: '#8a8a8a', rock: '#8c8a84' };
 export let groundCanvas = null;
 function paintGround() {
   const TW = 4096, TH = Math.round(4096 * (CITY.z1 - CITY.z0) / (CITY.x1 - CITY.x0));
@@ -455,7 +463,7 @@ function waterShader(mat, refl) {
           vec3 V = normalize(cameraPosition - vWw);
           float F = 0.02 + 0.98 * pow(1.0 - clamp(dot(V, gWn), 0.0, 1.0), 5.0);
           float wd3 = distance(cameraPosition, vWw);
-          vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.5, gWn.z) * (0.022 + 0.06 * uWet) * (1.0 - smoothstep(300.0, 5000.0, wd3) * 0.75);   // calm water = a nearly clean mirror, stretched a little up and down like real ripples
+          vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.5, gWn.z) * (0.022 + 0.06 * uWet) * mix(1.0, 0.07, smoothstep(60.0, 1500.0, wd3));   // calm water = a nearly clean mirror, stretched a little up and down like real ripples. (Far away a screen-space nudge spans a lot of world: it used to reach past the reflected horizon into the empty part of the reflection image = a whitish smear near the far shore.)
           vec3 rc = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
           float k = clamp(F * 1.25 + 0.06, 0.0, 0.9) * (1.0 - 0.45 * uWet) * (1.0 - 0.45 * gShal * uSunny);   // you see INTO shallow beach water
           outgoingLight = mix(outgoingLight, rc, k);
@@ -503,7 +511,8 @@ export function updateReflection(cam) {
   if (REFL.listT < 0 || !REFL.hide) { REFL.listT = 1; REFL.hide = []; scene.traverse(o => {
     if (o.isPoints) { REFL.hide.push(o); return; }   // stars, rain and sparkles read as dust on the water
     if (o === seaMesh || !(o.isMesh || o.isSprite)) return;
-    if (o.isSprite) { if (o.scale.x < 20) REFL.hide.push(o); return; }
+    if (o.isSprite) { if (o.scale.x < 10000) REFL.hide.push(o); return; }
+    if (o.isMesh && o.geometry?.parameters?.width >= 10000 && o.material?.transparent) { REFL.hide.push(o); return; }   // the weather's 40 km cloud layers (same smear)   // small sprites AND the cumulus/wisp cloud sprites (flat white blobs mirrored = a whitish smear on the water); the moon (huge) stays
     const g = o.geometry; if (!g) return; if (!g.boundingSphere) g.computeBoundingSphere(); const r = g.boundingSphere.radius;
     const m = Array.isArray(o.material) ? o.material[0] : o.material;
     if (/^road|curb/.test(m?.customProgramCacheKey?.() || '')) { REFL.hide.push(o); return; }   // flat streets, paths and curbs don't show in a reflection

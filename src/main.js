@@ -28,6 +28,7 @@ import { initDetails, updateDetails, artCamera } from './details.js';
 import { initQEPark, updateQEPark } from './qepark.js';
 import { initSkyline, updateSkyline } from './skyline.js';
 import { updateTreeSeason } from './treeseason.js';
+import { initBeaches, updateBeaches } from './beaches.js';
 import { initSnowFun, updateSnowFun, snowMarkers } from './snowfun.js';
 import { initSlopes, updateSlopes, slopeMarkers } from './slopes.js';
 import { initPistes, updatePistes } from './pistes.js';
@@ -74,7 +75,7 @@ async function load() {
   await progress('Building 38,000 real buildings and 32,000 streets… (this takes a moment)', 0.3);
   initCity((m, f) => { steps.push([m, f]); });
   await progress('Building landmarks…', 0.82);
-  buildLandmarks(); initSkyline(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
+  buildLandmarks(); initSkyline(); initBeaches(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
   await progress('Drawing the maps…', 0.9);
   buildMaps();
   await progress('Ready!', 1);
@@ -325,7 +326,7 @@ function loop(now, manual) {
   __mark('updateNightLights(play');
     updateStorefronts(player);
   __mark('updateStorefronts(play');
-    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player); updateTreeSeason(dt, player);
+    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player); updateTreeSeason(dt, player); updateBeaches(dt, player);
   __mark('updateDetails(player);');
     updateSnowFun(dt, player); updateSlopes(dt, player); updatePistes(dt, player); updateTrails(dt, player); updateWaterfront(dt, player); updateSkiers(dt, player); updateStreetLife(player.x, player.z); updateBeachLife(dt, player); updateActivities(dt, player); updateMinigames(dt, player); updateHouseDetail(player.x, player.z);
   __mark('updateSnowFun(dt, play');

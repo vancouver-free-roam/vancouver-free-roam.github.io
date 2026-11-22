@@ -789,6 +789,8 @@ export const SECRETS = [
   ['bigspender', 'Big Spender', 'You spent $5,000 in Vancouver. That\'s roughly two months of rent for a closet.'],
   ['clevelanddam', 'Cleveland Dam', 'The 91 m concrete dam holding back Capilano Lake, the drinking water for half of Metro Vancouver. Walk across the crest and watch the spillway roar.'],
   ['bloedel', 'Into the Jungle', 'You walked into the Bloedel Conservatory, the bubble dome on top of Little Mountain: a tropical rainforest with free-flying parrots, in the middle of Vancouver.'],
+  ['kitspool', 'Saltwater Laps', 'You swam in Kitsilano Pool: 137 m of heated saltwater right on Kits Beach, Canada\'s longest pool, open since 1931.'],
+  ['polarbear', 'Polar Bear', 'You charged into English Bay with the Polar Bear Swim. Vancouverites have done it every New Year\'s Day since 1920, often in costume, with thousands of people.'],
   ['leafpile', 'Crunch Time', 'You crashed through a pile of fall leaves. Vancouver\'s maples, oaks and chestnuts drop millions of leaves every October, and every kid knows what they\'re for.'],
   ['chandelier', 'The Spinning Chandelier', 'You stood under the giant crystal chandelier hanging beneath the Granville Bridge, right beside Vancouver House, the tower that starts as a triangle and ends as a rectangle. A few times a day it drops, lights up and spins.'],
   ['eastvan', 'East Van Cross', 'Ken Lum\'s glowing "Monument for East Vancouver": EAST down, VAN across. Pure East Van pride (best seen from the SkyTrain at night).'],
