@@ -381,6 +381,11 @@ export function makeFoliageMat(HAZE, TIME, AER) {
             diffuseColor.rgb = bk.rgb * 0.9;
             diffuseColor.a = 1.0;
           } else {
+            #if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+            // deciduous leaves take the tree's season colour, with only the light/shade of the yellowish leaf texture
+            // (multiplying by the texture's own tint turned pink blossom salmon-brown and dulled the fall reds)
+            if (vT > 2.5 && vT < 4.5) { vec4 lt = texture2D(map, vMapUv); diffuseColor.rgb = vColor * dot(lt.rgb, vec3(0.299, 0.587, 0.114)) * 1.08; }
+            #endif
             diffuseColor.rgb *= 1.45;
             if (vT > 3.5 && vT < 4.5) diffuseColor.rgb *= 0.7;   // the inside of a crown is shady
             diffuseColor.rgb *= 0.62 + 0.38 * smoothstep(-0.7, 0.8, vLn);   // undersides darker
@@ -389,7 +394,7 @@ export function makeFoliageMat(HAZE, TIME, AER) {
         #include <alphatest_fragment>`.replace('AER_OFF', AER ? 'false' : 'true'));
     if (AER) AER.apply(sh, 'vLw');   // blue distance haze after lighting, same as the ground
   };
-  m.customProgramCacheKey = () => 'foliage-v3';
+  m.customProgramCacheKey = () => 'foliage-v4';
   return m;
 }
 

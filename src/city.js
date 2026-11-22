@@ -931,10 +931,10 @@ function buildCityTrees(progress) {
   };
   for (let i = 0; i < M.trees.length; i += 2) {
     if (!onLand(M.trees[i], M.trees[i + 1])) continue;
-    const s = 1.8 + Math.random() * 1.4, roll = Math.random(), palmZone = Math.hypot(M.trees[i] - PALMS.x, M.trees[i + 1] - PALMS.z) < 900;
+    const s = 2.3 + Math.random() * 1.9, roll = Math.random(), palmZone = Math.hypot(M.trees[i] - PALMS.x, M.trees[i + 1] - PALMS.z) < 900;
     const k = palmZone && roll < 0.08 ? 6 : roll < 0.18 ? 3 : roll < 0.32 ? 4 : roll < 0.5 ? 5 : 1;   // cherry, columnar, broad, palm, or the usual
     const p = offRoads(M.trees[i], M.trees[i + 1], s * (k === 5 ? 0.8 : k === 4 ? 0.3 : 0.55) + 0.3); if (!p) continue;
-    list.push({ x: p[0], z: p[1], y: heightAt(p[0], p[1]), s: k === 6 ? s * 0.9 : s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : k === 6 ? 3.6 : 3.3), k, r: Math.random() * 6 });
+    list.push({ x: p[0], z: p[1], y: heightAt(p[0], p[1]), s: k === 6 ? s * 0.75 : s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : k === 6 ? 3.6 : k === 3 ? 2.4 : 3.3), k, r: Math.random() * 6 });
   }
   const TT = window.__treeT = [performance.now()];
   // boulevard trees: Vancouver's residential streets are lined with trees, but the map only has a few of them. Each street
@@ -948,7 +948,8 @@ function buildCityTrees(progress) {
       const h0 = hash2(ri, 77), h1 = hash2(77, ri);
       if (h0 < 0.12) return;   // some streets have no trees
       if (r.rg && townDensity(NX(r.p[0]), NZ(r.p[0])) < 0.004) return;   // out of town
-      const k = h1 < 0.22 ? 3 : h1 < 0.6 ? 1 : h1 < 0.75 ? 4 : 5, s0 = 1.6 + hash2(ri, 5) * 1.6, off = r.w / 2 + 2.6 + 1.0, step = (r.rg ? 14 : 11) + hash2(5, ri) * 5;
+      // (mature boulevard trees: most older Vancouver streets have big canopies, taller than the houses)
+      const k = h1 < 0.22 ? 3 : h1 < 0.6 ? 1 : h1 < 0.75 ? 4 : 5, s0 = (k === 3 ? 2.4 : 2.6) + hash2(ri, 5) * 2.0, off = r.w / 2 + 2.6 + 1.0, step = (r.rg ? 14 : 11) + hash2(5, ri) * 5;
       for (let i = 1; i < r.p.length; i++) {
         const ax = NX(r.p[i - 1]), az = NZ(r.p[i - 1]), dx = NX(r.p[i]) - ax, dz = NZ(r.p[i]) - az, L = Math.hypot(dx, dz); if (L < 20) continue;
         const ux = dx / L, uz = dz / L;
@@ -958,7 +959,7 @@ function buildCityTrees(progress) {
           if (near(x, z) || !onLand(x, z) || buildingAt(x, z) || buildingAt(x + ux * 2.5, z + uz * 2.5) || buildingAt(x - ux * 2.5, z - uz * 2.5)) continue;
           if (roadGap(x, z, 0, false).worst < 2.4) continue;   // not on a crossing street
           const s = s0 * (0.85 + hash2(z, x) * 0.3); have.add(key(x, z));
-          list.push({ x, z, y: heightAt(x, z), s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : 3.3), k, r: hash2(x, z) * 6 });
+          list.push({ x, z, y: heightAt(x, z), s, h: s * (k === 4 ? 4.4 : k === 5 ? 2.8 : k === 3 ? 2.4 : 3.3), k, r: hash2(x, z) * 6 });
         }
       }
     });
@@ -973,9 +974,9 @@ function buildCityTrees(progress) {
       for (let q = 0; q < n; q++) {
         const a = hash2(cz + q, cx) * 6.283, d = rr + 3 + hash2(cx + q, cz) * 5, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
         if (near(x, z) || !onLand(x, z) || buildingAt(x, z) || roadGap(x, z, 0, false).worst < 3) continue;
-        const roll = hash2(x, z), con = north ? roll < 0.55 : roll < 0.18, s = con ? 3 + hash2(z, x) * 2.5 : 2 + hash2(z, x) * 1.8;
+        const roll = hash2(x, z), con = north ? roll < 0.55 : roll < 0.18, s = con ? 3 + hash2(z, x) * 2.5 : 2.5 + hash2(z, x) * 2.1;
         const k = con ? [0, 7, 8][Math.floor(hash2(x + 1, z) * 3)] : roll > 0.9 ? 3 : roll > 0.7 ? 5 : 1;
-        have.add(key(x, z)); list.push({ x, z, y: heightAt(x, z), s, h: con ? s * (5 + hash2(x, z + 1) * 1.5) : s * (k === 5 ? 2.8 : 3.3), k, r: hash2(x, z) * 6 });
+        have.add(key(x, z)); list.push({ x, z, y: heightAt(x, z), s, h: con ? s * (5 + hash2(x, z + 1) * 1.5) : s * (k === 5 ? 2.8 : k === 3 ? 2.4 : 3.3), k, r: hash2(x, z) * 6 });
       }
     }
   }

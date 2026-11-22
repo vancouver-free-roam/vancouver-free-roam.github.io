@@ -27,6 +27,7 @@ import { initStorefronts, updateStorefronts } from './storefronts.js';
 import { initDetails, updateDetails, artCamera } from './details.js';
 import { initQEPark, updateQEPark } from './qepark.js';
 import { initSkyline, updateSkyline } from './skyline.js';
+import { updateTreeSeason } from './treeseason.js';
 import { initSnowFun, updateSnowFun, snowMarkers } from './snowfun.js';
 import { initSlopes, updateSlopes, slopeMarkers } from './slopes.js';
 import { initPistes, updatePistes } from './pistes.js';
@@ -324,7 +325,7 @@ function loop(now, manual) {
   __mark('updateNightLights(play');
     updateStorefronts(player);
   __mark('updateStorefronts(play');
-    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player);
+    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player); updateTreeSeason(dt, player);
   __mark('updateDetails(player);');
     updateSnowFun(dt, player); updateSlopes(dt, player); updatePistes(dt, player); updateTrails(dt, player); updateWaterfront(dt, player); updateSkiers(dt, player); updateStreetLife(player.x, player.z); updateBeachLife(dt, player); updateActivities(dt, player); updateMinigames(dt, player); updateHouseDetail(player.x, player.z);
   __mark('updateSnowFun(dt, play');
