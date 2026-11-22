@@ -463,7 +463,7 @@ function waterShader(mat, refl) {
           vec3 V = normalize(cameraPosition - vWw);
           float F = 0.02 + 0.98 * pow(1.0 - clamp(dot(V, gWn), 0.0, 1.0), 5.0);
           float wd3 = distance(cameraPosition, vWw);
-          vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.5, gWn.z) * (0.022 + 0.06 * uWet) * mix(1.0, 0.07, smoothstep(60.0, 1500.0, wd3));   // calm water = a nearly clean mirror, stretched a little up and down like real ripples. (Far away a screen-space nudge spans a lot of world: it used to reach past the reflected horizon into the empty part of the reflection image = a whitish smear near the far shore.)
+          vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.12, gWn.z) * (0.022 + 0.06 * uWet) * mix(1.0, 0.07, smoothstep(60.0, 1500.0, wd3));   // calm water = a nearly clean mirror, stretched a little up and down like real ripples. (Far away a screen-space nudge spans a lot of world: it used to reach past the reflected horizon into the empty part of the reflection image = a whitish smear near the far shore.)
           vec3 rc = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
           float k = clamp(F * 1.25 + 0.06, 0.0, 0.9) * (1.0 - 0.45 * uWet) * (1.0 - 0.45 * gShal * uSunny);   // you see INTO shallow beach water
           outgoingLight = mix(outgoingLight, rc, k);
@@ -488,7 +488,14 @@ export function updateReflection(cam) {
   cam.updateMatrixWorld();
   REFL.checkT -= G.dt || 0.016; if (REFL.checkT < 0) { REFL.checkT = 0.3; REFL.seen = seaInView(cam); }
   if (!REFL.seen) { REFL.on.value = 0; return; }
-  REFL.frame = (REFL.frame || 0) + 1; if (REFL.on.value && REFL.frame % 2 && !REFL.force) return;   // every other frame (the ripples hide the lag); the texture keeps the camera it was drawn with
+  // A mirror image only lines up with the view it was drawn for: reusing last frame's picture while the camera moves made
+  // reflections slide sideways off their buildings and jump back (Dav: "jerking all over the place", "off-centre").
+  // So it's redrawn every frame the camera moves or turns, and reused only while the camera is perfectly still.
+  const me = cam.matrixWorld.elements, lm = REFL.lastM || (REFL.lastM = new Float32Array(16));
+  let moved = REFL.force || !REFL.on.value || REFL.lastFov !== cam.fov || REFL.lastAsp !== cam.aspect;
+  for (let i = 0; i < 16 && !moved; i++) if (Math.abs(me[i] - lm[i]) > (i >= 12 ? 0.002 : 0.00002)) moved = true;
+  REFL.still = (REFL.still || 0) + 1; if (!moved && REFL.still < 30) return;   // still camera: refresh twice a second (moving boats, cars)
+  REFL.still = 0; for (let i = 0; i < 16; i++) lm[i] = me[i]; REFL.lastFov = cam.fov; REFL.lastAsp = cam.aspect;
   REFL.force = false;
   renderer.getDrawingBufferSize(_bs); const w = Math.max(64, Math.round(_bs.x * sc)), h = Math.max(64, Math.round(_bs.y * sc));
   if (!REFL.rt) { REFL.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType }); REFL.tex.value = REFL.rt.texture; }
@@ -716,7 +723,7 @@ export const forestHoles = [];   // {x, z, r2}: cleared ground (snowfun.js tube 
 const SPECIES = { douglas: [0.31, 0.4, 0.07], cedar: [0.25, 0.45, 0.085], hemlock: [0.33, 0.38, 0.062], subalpine: [0.4, 0.28, 0.075] };
 function buildForestCell(ci, cj) {
   let seed = (ci * 73856093) ^ (cj * 19349663); const rnd = () => { seed = (seed * 1664525 + 1013904223) | 0; return ((seed >>> 0) % 100000) / 100000; };
-  const L = { douglas: [], cedar: [], hemlock: [], subalpine: [], broad: [] }; let total = 0;
+  const L = { douglas: [], cedar: [], hemlock: [], subalpine: [], broad: [], spruce: [], maple: [], vine: [] }; let total = 0;
   for (let n = 0; n < 6500 && total < FOREST_MAX; n++) {
     const x = ci * FC + rnd() * FC, z = cj * FC + rnd() * FC;
     if (maskAt(x, z) !== -1) continue;
@@ -733,21 +740,33 @@ function buildForestCell(ci, cj) {
     if (!roadFilter(x, z) || !pisteFilter(x, z)) continue;
     const wet = vnoise(x * 0.01 + 9, z * 0.01 - 4), r = rnd(); let kind, H;
     if (h > 1150) { kind = r < 0.7 ? 'subalpine' : 'hemlock'; H = 7 + rnd() * 12 * (1 - clamp((h - 1150) / 600, 0, 0.7)); }
-    else if (h < 380 && vnoise(x * 0.008 + 50, z * 0.008) > 0.64) { kind = 'broad'; H = 11 + rnd() * 9; }   // alder / bigleaf maple patches down low
+    else if (h < 380 && vnoise(x * 0.008 + 50, z * 0.008) > 0.64) { kind = r < 0.55 ? 'broad' : 'maple'; H = kind === 'maple' ? 16 + rnd() * 14 : 11 + rnd() * 9; }   // red alder / bigleaf maple patches down low
+    else if (h < 900 && r > 0.93) { kind = 'vine'; H = 4 + rnd() * 4; }   // vine maple in the understory (blazing red in the fall)
+    else if (h < 120 && wet > 0.55 && r < 0.4) { kind = 'spruce'; H = 30 + rnd() * 30; }   // Sitka spruce: wet flats near the coast and rivers
     else { kind = r < 0.42 ? 'douglas' : r < 0.42 + 0.35 * (0.5 + wet) ? 'cedar' : 'hemlock'; const tall = h < 600 ? 1 : 1 - (h - 600) / 1100; H = (24 + rnd() * 30) * Math.max(0.45, tall); }
-    const rad = kind === 'broad' ? H * 0.4 : H * ({ douglas: 0.17, cedar: 0.2, hemlock: 0.15, subalpine: 0.12 }[kind]);
+    const rad = kind === 'broad' ? H * 0.4 : kind === 'maple' ? H * 0.5 : kind === 'vine' ? H * 0.75 : H * ({ douglas: 0.17, cedar: 0.2, hemlock: 0.15, subalpine: 0.12, spruce: 0.19 }[kind]);
     L[kind].push({ x, y: h - 0.4, z, s: rad, h: H }); total++;
   }
   if (!total) return null;
   const grp = new THREE.Group(), o = new THREE.Object3D(), col = new THREE.Color();
-  for (const kind of Object.keys(L)) {
-    const items = L[kind]; if (!items.length) continue;
-    const key = kind === 'broad' ? 'alder' : kind, m = new THREE.InstancedMesh(SPECIES_GEO[key].far, FOLIAGE, items.length), pos = new Float32Array(items.length * 2);
-    m.userData.pos = pos; treeRing.add(m, key, (ci + 0.5) * FC, (cj + 0.5) * FC, FC / 2);
-    items.forEach((t, i) => { pos[2 * i] = t.x; pos[2 * i + 1] = t.z;
+  // several species share one tree shape (Sitka spruce = fir shape, bigleaf maple = broad maple, vine maple = leafy): one mesh per shape
+  const KEY = { broad: 'alder', spruce: 'douglas', maple: 'broadmaple', vine: 'leafy' }, byKey = {};
+  for (const kind of Object.keys(L)) for (const t of L[kind]) { t.kind = kind; (byKey[KEY[kind] || kind] ||= []).push(t); }
+  for (const key of Object.keys(byKey)) {
+    const items = byKey[key]; for (let i = items.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [items[i], items[j]] = [items[j], items[i]]; }   // keep the LOD "first N" an even sample
+    const m = new THREE.InstancedMesh(SPECIES_GEO[key].far, FOLIAGE, items.length), pos = new Float32Array(items.length * 2), hts = new Float32Array(items.length);
+    m.userData.pos = pos; m.userData.hts = hts; treeRing.add(m, key, (ci + 0.5) * FC, (cj + 0.5) * FC, FC / 2);
+    items.forEach((t, i) => { const kind = t.kind; pos[2 * i] = t.x; pos[2 * i + 1] = t.z; hts[i] = t.h;
       o.position.set(t.x, t.y, t.z); o.rotation.set((rnd() - 0.5) * 0.06, rnd() * 6.28, (rnd() - 0.5) * 0.06); o.scale.set(t.s, t.h, t.s); o.updateMatrix(); m.setMatrixAt(i, o.matrix);
-      if (kind === 'broad') { const se = G.season; if (se === 'fall') col.setHSL(0.06 + rnd() * 0.08, 0.65, 0.3 + rnd() * 0.08); else if (se === 'winter') col.setHSL(0.07, 0.12, 0.24); else col.setHSL(0.24 + rnd() * 0.05, 0.45, 0.18 + rnd() * 0.06); }
-      else { const [hh, ss, ll] = SPECIES[kind]; col.setHSL(hh + (rnd() - 0.5) * 0.03, ss + (rnd() - 0.5) * 0.08, ll * (0.8 + rnd() * 0.45)); if (G.season === 'winter' || t.y > snowLine()) col.lerp(SNOWC, 0.35); }
+      const se = G.season;
+      if (kind === 'broad' || kind === 'maple' || kind === 'vine') {
+        if (se === 'fall') { if (kind === 'vine') col.setHSL(0.0 + rnd() * 0.04, 0.8, 0.36 + rnd() * 0.08); else if (kind === 'maple') col.setHSL(0.11 + rnd() * 0.04, 0.8, 0.42 + rnd() * 0.08); else col.setHSL(0.15 + rnd() * 0.06, 0.35, 0.26 + rnd() * 0.06); }   // vine maple red, bigleaf maple gold, alder dull yellow-green
+        else if (se === 'winter') col.setHSL(0.07, 0.12, 0.24);
+        else if (se === 'spring') col.setHSL(0.24 + rnd() * 0.04, 0.6, 0.3 + rnd() * 0.08);   // fresh lime-green new leaves
+        else col.setHSL(0.24 + rnd() * 0.05, 0.45, 0.18 + rnd() * 0.06);
+      }
+      else if (kind === 'spruce') { col.setHSL(0.42 + (rnd() - 0.5) * 0.03, 0.25, 0.085 * (0.8 + rnd() * 0.4)); if (se === 'winter') col.lerp(SNOWC, 0.3); }   // blue-green Sitka spruce
+      else { const [hh, ss, ll] = SPECIES[kind]; col.setHSL(hh + (rnd() - 0.5) * 0.03, ss + (rnd() - 0.5) * 0.08, ll * (0.8 + rnd() * 0.45)); if (se === 'winter' || t.y > snowLine()) col.lerp(SNOWC, 0.35); }
       m.setColorAt(i, col);
     });
     m.castShadow = true; m.receiveShadow = true; m.computeBoundingSphere(); m.userData.full = items.length; grp.add(m);
@@ -774,7 +793,17 @@ function inWood(x, z) {
   for (const p of l) { let c = false; for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) if (((p[i + 1] > z) !== (p[j + 1] > z)) && x < (p[j] - p[i]) * (z - p[i + 1]) / (p[j + 1] - p[i + 1]) + p[i]) c = !c; if (c) return true; }
   return false;
 }
-const wildForest = (x, z, h) => pisteFilter(x, z) && ((inWood(x, z) && h > 1 && !isSnow(x, z, h) && roadFilter(x, z)) || maskAt(x, z) === -1 && h > 3 && h < 1250 && townDensity(x, z) <= 0.01 && !isRichmond(x, z) && !isNorthShoreTown(x, z, h) && !isSnow(x, z, h) && vnoise(x * 0.003, z * 0.003) >= 0.2 && roadFilter(x, z));
+// tree trunks near a point (wild forest cells + city/park trees): [{x, z, y, h}] — bear cubs climb them, owls perch in them
+export function treesNear(x, z, r) {
+  const out = [], r2 = r * r;
+  for (let i = Math.floor((x - r) / FC); i <= Math.floor((x + r) / FC); i++) for (let j = Math.floor((z - r) / FC); j <= Math.floor((z + r) / FC); j++) {
+    const cell = forestCells.get(i + ',' + j); if (!cell) continue;
+    for (const m of cell.children) { const p = m.userData.pos, hs = m.userData.hts; if (!p || !hs) continue; for (let k = 0; k < hs.length; k++) { const dx = p[2 * k] - x, dz = p[2 * k + 1] - z; if (dx * dx + dz * dz < r2) out.push({ x: p[2 * k], z: p[2 * k + 1], y: heightAt(p[2 * k], p[2 * k + 1]) - 0.4, h: hs[k] }); } }
+  }
+  for (const c of treeChunks) { if (Math.abs(c.userData.cx - x) > 300 + r || Math.abs(c.userData.cz - z) > 300 + r) continue; for (const m of c.children) { const it = m.userData.items; if (!it || !m.userData.crown) continue; for (const t of it) if ((t.x - x) ** 2 + (t.z - z) ** 2 < r2) out.push({ x: t.x, z: t.z, y: t.y, h: t.h }); } }
+  return out;
+}
+export const wildForest = (x, z, h) => pisteFilter(x, z) && ((inWood(x, z) && h > 1 && !isSnow(x, z, h) && roadFilter(x, z)) || maskAt(x, z) === -1 && h > 3 && h < 1250 && townDensity(x, z) <= 0.01 && !isRichmond(x, z) && !isNorthShoreTown(x, z, h) && !isSnow(x, z, h) && vnoise(x * 0.003, z * 0.003) >= 0.2 && roadFilter(x, z));
 function updateUndergrowth(px, pz) {
   if (Math.hypot(px - UG.x, pz - UG.z) < 35) return;
   UG.x = px; UG.z = pz; if (!UG.meshes) UG.meshes = ugMeshes();

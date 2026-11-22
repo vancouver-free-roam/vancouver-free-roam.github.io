@@ -66,11 +66,8 @@ export function initAnimals() {
   }
   // coyotes in Stanley Park
   for (let i = 0; i < 3; i++) { const [x, z] = at(49.302 + R(-0.004, 0.004), -123.140 + R(-0.006, 0.006)); addAnimal('coyote', quadruped('#a08060', 1.2, { ears: true, tail: true }), x, z); }
-  // black bears on the North Shore + the Grouse grizzlies
-  for (const [lat, lon] of [[49.3720, -123.0870], [49.3650, -122.9550], [49.3900, -123.2000], [49.3500, -123.1000], [49.3600, -123.0400]]) { const [x, z] = at(lat, lon); addAnimal('bear', quadruped('#1b1715', 2.4, { ears: true }), x, z); }
-  for (const [lat, lon] of [[50.0950, -122.9700], [50.1300, -122.9300], [50.0800, -122.9300], [49.7200, -123.1100]]) { const [x, z] = at(lat, lon); addAnimal('bear', quadruped('#1b1715', 2.4, { ears: true }), x, z); }
+  // (black bears + the Grouse grizzlies Coola & Grinder now live in fauna.js, with real bear models and behaviour)
   for (let i = 0; i < 8; i++) { const [x, z] = at(49.774 + R(-0.01, 0.01), -123.150 + R(-0.01, 0.01)); addAnimal('eagle', simpleBird('#3a2a1a', 1.1), x, z, { alt: R(40, 120), rad: R(40, 160) }); }
-  for (let i = 0; i < 2; i++) { const [x, z] = at(49.3792 + i * 0.0003, -123.0835); addAnimal('bear', quadruped('#6b4a2e', 2.8, { ears: true }), x, z, { name: i ? 'Grinder' : 'Coola' }); }
   // birds: gulls along the waterfront, crows, eagles over Stanley Park
   for (let i = 0; i < 26; i++) { const [x, z] = at(49.288 + R(-0.006, 0.01), -123.115 + R(-0.03, 0.03)); addAnimal('gull', simpleBird('#e9ecef', 0.55), x, z, { alt: R(15, 45), rad: R(15, 50) }); }
   for (let i = 0; i < 40; i++) { const [x, z] = at(49.280 + R(-0.012, 0.012), -123.110 + R(-0.03, 0.03)); addAnimal('crow', simpleBird('#111', 0.4), x, z, { alt: 0, rad: R(5, 20) }); }
@@ -79,6 +76,7 @@ export function initAnimals() {
 
 export function updateAnimals(dt, pl) {
   for (const a of animals) {
+    if (a.ext) continue;   // fauna.js animals update themselves
     const dp = Math.hypot(a.x - pl.x, a.z - pl.z);
     a.mesh.visible = dp < (a.kind === 'orca' || a.kind === 'eagle' ? 2500 : 400);
     if (!a.mesh.visible && a.kind !== 'orca') continue;

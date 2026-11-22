@@ -11,6 +11,8 @@ export const J = { seen: {}, photos: {} };   // id -> count, id -> true
 const PAY = [5, 15, 50, 150];
 let toastT = 0;
 
+// the phone's 📖 Nature tab button (added from JS so the online copy needs no index.html change; main.js binds every tab button after this runs)
+try { const t = document.querySelector('#phone .tabs'); if (t && !t.querySelector('[data-tab="nature"]')) { const b = document.createElement('button'); b.dataset.tab = 'nature'; b.textContent = '📖 Nature'; t.insertBefore(b, t.querySelector('[data-tab="eggs"]')); } } catch (e) { }
 export function register(id, e) { if (!ENTRIES.has(id)) ENTRIES.set(id, { id, rare: 0, kind: 'fauna', group: 'Other', ...e }); }
 
 // a sighting: the first one of a species shows its fact; later ones just count

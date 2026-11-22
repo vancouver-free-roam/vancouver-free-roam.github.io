@@ -4,7 +4,7 @@
 // E next to an animal = watch / make noise / (please don't) feed it; P = photograph it; the 📖 Nature tab is the field guide.
 import * as THREE from 'three';
 import { G, scene, camera, R, pick, clamp, wrapAngle, tapped, toXZ } from './core.js';
-import { heightAt, isWater, waterLevel, maskAt, isSnow, isNorthShoreTown, isRichmond, townDensity, wildForest, treesNear } from './terrain.js';
+import { heightAt, isWater, waterLevel, maskAt, isSnow, isNorthShoreTown, isRichmond, townDensity, wildForest, treesNear, snowLine } from './terrain.js';
 import { walkY, buildingAt, nearBuildings, nearestRoad } from './city.js';
 import { animals } from './animals.js';
 import { say } from './people.js';
@@ -15,7 +15,7 @@ import { onIsland } from './island.js';
 import { OWN } from './shops.js';
 import { register, spot, photo, softSpot } from './journal.js';
 import { tintShader, bake, SP, SPs, CN, BX, cylD } from './tint.js';
-import { photoPlant } from './flora.js';
+import { photoPlant, floraPrompt } from './flora.js';
 
 const M = window.MAP;
 // ---------- areas index (parks, woods, ponds…) ----------
@@ -167,7 +167,7 @@ const S = {
     build: () => quad({ L: 0.38, H: 0.38, g: 0.14, leg: 0.045, head: 0.095, neck: [0.12, 0.3], snout: [0.05, 0.05], muzzle: '#eee5d5', ears: ['tuft', 0.05], tail: [0.12, 0.035, 0.3, 'F'], tailTip: '#1a1612', belly: 'F1.4', xbody: o => { const s = []; for (let i = 0; i < 14; i++) s.push([SPs, '#3a2c1e', (Math.random() - 0.5) * o.g * 1.7, o.g * (0.2 + Math.random() * 0.5), -Math.random() * o.L * 1.1, 0.02, 0.015, 0.03]); return s; } }),
     cap: 2, ai: 'grazer', speed: [1.1, 11], size: [0.95, 1.05], spot: 35, flee: 30, gait: 'bound', col: () => '#a3845f', hab: c => (c.forest || c.wild) && c.h < 700, when: () => dusk() ? 2.5 : 0.6, w: 0.06, n: [1, 1], max: 1 },
   lynx: { name: 'Canada lynx', emoji: '🐈', group: MT, rare: 2, fact: 'Giant furry paws work like snowshoes; long black ear tufts; a frosty grey coat. Lynx numbers rise and fall with the snowshoe hares they hunt, in a 10-year cycle.', where: 'subalpine forest, especially in snow (rare)',
-    build: () => quad({ L: 0.42, H: 0.5, g: 0.15, leg: 0.055, head: 0.1, neck: [0.13, 0.3], snout: [0.05, 0.05], ears: ['tuft', 0.075], tail: [0.1, 0.04, 0.5], tailTip: '#111', paw: 1.9, belly: 'F1.2', xhead: (ny, nz, hd) => [-1, 1].map(s => [CN, 'F1.15', s * hd * 0.75, ny - hd * 0.35, nz - hd * 0.2, hd * 0.25, hd * 0.6, hd * 0.2, 0, 0, s * 2.4])] }),
+    build: () => quad({ L: 0.42, H: 0.5, g: 0.15, leg: 0.055, head: 0.1, neck: [0.13, 0.3], snout: [0.05, 0.05], ears: ['tuft', 0.075], tail: [0.1, 0.04, 0.5], tailTip: '#111', paw: 1.9, belly: 'F1.2', xhead: (ny, nz, hd) => [-1, 1].map(s => [CN, 'F1.15', s * hd * 0.75, ny - hd * 0.35, nz - hd * 0.2, hd * 0.25, hd * 0.6, hd * 0.2, 0, 0, s * 2.4]) }),
     cap: 2, ai: 'grazer', speed: [1.1, 11], size: [0.95, 1.05], spot: 40, flee: 30, gait: 'bound', col: () => '#a9a39a', hab: c => (c.forest || c.wild) && c.h > 800 && c.h < 1800, when: () => isSnowNow() ? 2 : 0.5, w: 0.03, n: [1, 1], max: 1 },
   wolf: { name: 'Grey wolf', emoji: '🐺', group: MT, rare: 2, fact: 'Wolves live in family packs and can travel 50 km a day. Coastal BC wolves even swim between islands and eat salmon and seals. Their howl carries 10 km.', where: 'remote valleys up the Sea-to-Sky and on Vancouver Island (rare)',
     build: () => quad({ L: 0.66, H: 0.66, g: 0.19, leg: 0.05, head: 0.12, neck: [0.28, 0.45], snout: [0.2, 0.06], ears: ['point', 0.085], tail: [0.48, 0.07, 1.0], muzzle: 'F1.3', belly: 'F1.35', chest: 1.1 }),
@@ -215,7 +215,7 @@ const S = {
     build: () => bird({ len: 0.3, headc: '#121a26', belly: '#2b4f8c', wingc: '#24508f', tailc: '#1f4a8a', beak: '#111', xhead: r => [[CN, '#121a26', 0, r * 1.05, r * 0.1, r * 0.35, r * 0.9, r * 0.25, 0.6]] }),
     cap: 6, ai: 'groundbird', speed: [1, 8], size: [0.95, 1.05], spot: 25, flee: 6, col: () => '#2d5aa0', call: 'jay', hab: c => c.forest || (c.town && c.z < -3000), w: 0.5, n: [1, 2], max: 3, small: true },
   grouse: { name: 'Sooty grouse', emoji: '🐦', group: BIRDS, fact: 'Males "hoot" deep booming calls from the treetops in spring. On the ground they freeze, then explode into flight at your feet and give you a heart attack.', where: 'mountain forests',
-    build: () => bird({ len: 0.48, belly: 'F0.8', legs: 0.06, beak: '#2a2a2a', xhead: r => [-1, 1].map(s => [SPs, '#e8862a', s * r * 0.35, r * 0.65, -r * 0.4, r * 0.18, r * 0.08, r * 0.2])] }),
+    build: () => bird({ len: 0.48, belly: 'F0.8', legs: 0.06, beak: '#2a2a2a', xhead: r => [-1, 1].map(s => [SPs, '#e8862a', s * r * 0.35, r * 0.65, -r * 0.4, r * 0.18, r * 0.08, r * 0.2]) }),
     cap: 4, ai: 'groundbird', flush: true, speed: [0.6, 9], size: [0.95, 1.05], spot: 20, flee: 4, col: () => '#4d4a48', call: 'hoot', hab: c => c.forest && c.h > 300, w: 0.3, n: [1, 1], max: 2, small: true },
   ptarmigan: { name: 'White-tailed ptarmigan', emoji: '🐦', group: BIRDS, rare: 1, fact: 'Canada\'s smallest grouse is pure white in winter and speckled like the rocks in summer. Feathered feet = built-in snowshoes.', where: 'above the treeline',
     build: () => bird({ len: 0.32, belly: '#f4f4f0', legs: 0.05, wingc: '#f4f4f0', beak: '#111' }),
@@ -535,7 +535,7 @@ function habitat(x, z) {
   const h = heightAt(x, z), water = isWater(x, z), m = maskAt(x, z);
   const c = { x, z, h, water, city: m !== -1, island: onIsland(x, z) };
   if (water) { c.fresh = waterLevel(x, z) > 0 || !!areaAt(x, z, 'water'); c.sea = !c.fresh; return c; }
-  c.snow = isSnow(x, z, h); c.town = isNorthShoreTown(x, z, h) || townDensity(x, z) > 0.01 || isRichmond(x, z);
+  c.snow = isSnow(x, z, h) || h > snowLine() - 220; c.town = isNorthShoreTown(x, z, h) || townDensity(x, z) > 0.01 || isRichmond(x, z);
   c.forest = wildForest(x, z, h); c.wild = m === -1 && !c.town && h > 3;
   c.park = c.city && !!(areaAt(x, z, 'park') || areaAt(x, z, 'wood')); c.grass = !!areaAt(x, z, 'grass') || c.park; c.wood = c.city && !!areaAt(x, z, 'wood');
   c.garden = c.city && !!areaAt(x, z, 'flower');
@@ -767,9 +767,9 @@ let promptA = null;
 export function faunaPrompt(pl) {
   if (pl.vehicle || G.dialogOpen || pl.transit) return '';
   let best = null, bd = 1e9;
-  for (const a of live) { if (a.vis === false || a.cub || a.id === 'crow' || a.id === 'gull' || a.id === 'salmon') continue; const d = Math.hypot(a.x - pl.x, a.z - pl.z), r = a.kind === 'bear' ? 32 : a.id === 'cougar' || a.id === 'wolf' ? 45 : a.id === 'moose' ? 25 : a.S.small ? 5 : 9; if (d < r && d < bd) { bd = d; best = a; } }
+  for (const a of live) { if (a.vis === false || a.cub || a.id === 'crow' || a.id === 'gull' || a.id === 'salmon') continue; const d = Math.hypot(a.x - pl.x, a.z - pl.z), r = a.kind === 'bear' ? (a.fence ? 10 : 32) : a.id === 'cougar' || a.id === 'wolf' ? 45 : a.id === 'moose' ? 25 : a.S.small ? 5 : 9; if (d < r && d < bd) { bd = d; best = a; } }
   for (const o of animals) { if (o.ext || !['goose', 'raccoon'].includes(o.kind)) continue; const d = Math.hypot(o.x - pl.x, o.z - pl.z); if (d < 5 && d < bd) { bd = d; best = o; } }
-  promptA = best; if (!best) return '';
+  promptA = best; if (!best) return floraPrompt(pl);
   const kind = best.kind, nm = best.S ? best.S.name : kind === 'goose' ? 'Canada goose' : 'raccoon';
   if (kind === 'bear') { if (tapped('KeyE')) { if (best.fence) { ui.toast('🐻 ' + best.name, 'Coola and Grinder live safely inside the refuge fence. They don\'t care how loud you are. Grinder yawns.', 3500); return ''; } best.noise = 1; for (const c of best.cubs || []) c.noise = 1; say(pl, 'HEY BEAR! Easy, bear…', 1800); if (!best.heyed) { best.heyed = true; pl.karma = (pl.karma || 0) + 1; discover('heybear'); ui.toast('🗣️ "HEY BEAR!"', 'Perfect: a calm, loud voice tells the bear you\'re a person, not prey. It decides you\'re not worth the trouble. (+1 karma)', 5000); } } return '<kbd>E</kbd> 🗣️ Make noise: "HEY BEAR!" (calm and loud)'; }
   if (best.id === 'cougar' || best.id === 'wolf') { if (tapped('KeyE')) { best.noise = 1; if (best.S.ai === 'wolf' || best.id === 'wolf') { setSt(best, 'flee', 10); away(best, pl, 80); } ui.toast('🙌 You made yourself BIG', 'Arms up, jacket open, loud voice, eye contact, back away slowly. It slinks off into the trees. Textbook.', 4500); discover('cougar'); } return `<kbd>E</kbd> 🙌 Make yourself big (${nm.toLowerCase()})`; }

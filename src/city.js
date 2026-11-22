@@ -495,6 +495,9 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
         float bd = fract(vWP.y / 0.18);
         diffuseColor.rgb *= mix(1.0, 0.78 + 0.22 * smoothstep(0.0, 0.3, bd), wallOnly * nearB);
         // white trim at the corners of the wall is suggested by the frames below
+      } else if (sty > 3.5 && sty < 4.5) {   // industrial: corrugated metal cladding (vertical ribs every 30 cm), still readable mid-distance
+        float rib = abs(fract(fU / 0.3) - 0.5) * 2.0, midR = 1.0 - smoothstep(0.08, 0.6, dU);
+        diffuseColor.rgb *= mix(1.0, 0.8 + 0.28 * smoothstep(0.15, 0.6, rib), wallOnly * midR);
       } else if (sty > 0.5 && sty < 1.5) {   // concrete: panel joints + tie-hole dots
         float j = max(step(0.985, fract(up / P.x)), step(0.99, fract(fU / 3.0)));
         diffuseColor.rgb *= mix(1.0, 0.72, j * wallOnly * nearB);
@@ -572,7 +575,7 @@ const LANDMARK_LOOK = [
   [/^Carnegie Library$/, { c: '#c9b28a', s: 2, rc: '#5e9a80' }], [/^Former Main Post Office$/, { c: '#c2bdb2', s: 1 }],
   [/^Guinness Tower$/, { c: '#cbc2b2', s: 1 }], [/^Rogers Arena$|^Pacific Coliseum$|^PNE Forum$/, { c: '#d3d5d4', s: 1 }],
   [/^Museum of Anthropology$/, { c: '#b4aea3', s: 1 }], [/^Museum of Vancouver$/, { c: '#ece9e2', s: 1 }], [/^Vancouver Maritime Museum$/, { c: '#e8e4da', s: 1 }],
-  [/^Chinese Cultural Centre/, { c: '#ece6da', s: 5 }], [/^Science World$/, { c: '#e8eaea', s: 1 }],
+  [/^Chinese Cultural Centre/, { c: '#ece6da', s: 5 }], [/^Tap & Barrel Bridges$|^Bridges( Restaurant)?$/, { c: '#f2c230', s: 4 }],   // Bridges: the famous bright-yellow shed on Granville Island [/^Science World$/, { c: '#e8eaea', s: 1 }],
 ];
 const lookByName = n => { if (!n) return null; for (const [re, L] of LANDMARK_LOOK) if (re.test(n)) return L; return null; };
 // OSM often names only one part of a landmark (e.g. the Hotel Vancouver's podium); unnamed parts standing inside or right
@@ -598,8 +601,11 @@ const PAL = {
   shop: ['#e2d4b6', '#b8c9b0', '#e8c48a', '#a8bfcf', '#d39a7a', '#f0e6d2', '#9fbfa8', '#c9a0b4', '#e6cf9a'],
   chalet: ['#7a5a3c', '#8b6b4a', '#6b4a32', '#a08060', '#5c4a3a', '#c9b48a', '#9a8f80', '#b8a68a'],
   chinatown: ['#9c2f2a', '#b5873a', '#3f6f5a', '#a8674a', '#8b4a35', '#c9b48a'],
+  // Granville Island's painted corrugated-metal sheds (old factories turned into the market, studios and theatres)
+  granville: ['#b5402f', '#d9a521', '#2f7fa3', '#3d8f5a', '#2a9187', '#7a4a8f', '#cf6a2c', '#35506b', '#c9473d', '#e0b34a', '#5a8fb8', '#9a3b3b'],
 };
 const inChinatown = (x, z) => x > 1050 && x < 1900 && z > 80 && z < 620;
+export const inGranville = (x, z) => Math.hypot(x + 1032, z - 1305) < 255 && z < 1530;   // Granville Island (49.2712, -123.1342)
 const inGastown = (x, z) => x > 450 && x < 1300 && z > -320 && z < 120;
 
 // a small box on a roof (no bottom face), drawn in the roof style so it gets no windows
@@ -677,7 +683,9 @@ function buildBuildings(progress) {
     let area = 0; for (let i = 0, j = cnt - 1; i < cnt; j = i++) area += (p[j * 2] - p[i * 2]) * (p[j * 2 + 1] + p[i * 2 + 1]); area = Math.abs(area / 2);
     const houseLike = b.t === 1 || (b.t === 0 && area < 320 && b.h <= 11) || (b.t === 2 && area < 450 && b.h <= 12);
     let style, pal;
+    const gi = b.h < 18 && inGranville(cx, cz);
     if (cz < -30000) { style = b.h > 14 ? 2 : 3; pal = PAL.chalet; }   // Squamish + Whistler: mountain lodges
+    else if (gi) { style = 4; pal = PAL.granville; }                     // Granville Island: painted corrugated sheds
     else if (b.m) { [style, pal] = { 1: [2, PAL.brick], 2: [0, PAL.glass], 3: [3, PAL.house], 4: [1, PAL.concrete], 5: [2, PAL.stone], 6: [4, PAL.industrial], 7: [1, PAL.apartment] }[b.m]; }
     else if (houseLike) { style = 3; pal = PAL.house; }
     else if (b.t === 2 && b.h < 20 && !inChinatown(cx, cz) && !inGastown(cx, cz)) { style = hsh < 0.65 ? 1 : 2; pal = style === 1 ? PAL.apartment : PAL.brick; }
@@ -698,7 +706,7 @@ function buildBuildings(progress) {
     const r = Math.round(col.r * 255), gC = Math.round(col.g * 255), bl = Math.round(col.b * 255);
     // pitched roof (gabled or hipped) for houses, small walk-ups and mountain chalets on box-like footprints
     let roof = null;
-    if (((houseLike || (cz < -30000 && b.h <= 14)) && cnt <= 16 && b.rs !== 3 && b.rs !== 6) || (LK && (LK.steep || (LK.rc && [1, 2, 4].includes(b.rs))) && cnt <= 40)) {   // + the real pitched/copper roofs of landmark buildings
+    if (((houseLike || gi || (cz < -30000 && b.h <= 14)) && cnt <= 16 && b.rs !== 3 && b.rs !== 6) || (LK && (LK.steep || (LK.rc && [1, 2, 4].includes(b.rs))) && cnt <= 40)) {   // + the real pitched/copper roofs of landmark buildings
       let bestL = 0, ux = 1, uz = 0;
       for (let i = 0; i < cnt; i++) { const a = pts[i], c = pts[(i + 1) % cnt], L = Math.hypot(c.x - a.x, c.y - a.y); if (L > bestL) { bestL = L; ux = (c.x - a.x) / L; uz = (c.y - a.y) / L; } }
       const range = (ax, az) => { let lo = 1e9, hi = -1e9; for (const q of pts) { const d = q.x * ax + q.y * az; lo = Math.min(lo, d); hi = Math.max(hi, d); } return [lo, hi]; };

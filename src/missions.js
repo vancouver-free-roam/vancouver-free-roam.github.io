@@ -22,6 +22,7 @@ import { activityPrompt } from './activities.js';
 import { trailsPrompt } from './trails.js';
 import { minigamePrompt } from './minigames.js';
 import { boatPrompt } from './boats.js';
+import { faunaPrompt } from './fauna.js';
 import { parkedSpots } from './streetlife.js';
 import { shopPrompt, updateShops, gigText, gigActive, startGig, stopGig, OWN } from './shops.js';
 import { setWeather, W, splashStats } from './weather.js';
@@ -789,6 +790,7 @@ export const SECRETS = [
   ['bigspender', 'Big Spender', 'You spent $5,000 in Vancouver. That\'s roughly two months of rent for a closet.'],
   ['clevelanddam', 'Cleveland Dam', 'The 91 m concrete dam holding back Capilano Lake, the drinking water for half of Metro Vancouver. Walk across the crest and watch the spillway roar.'],
   ['bloedel', 'Into the Jungle', 'You walked into the Bloedel Conservatory, the bubble dome on top of Little Mountain: a tropical rainforest with free-flying parrots, in the middle of Vancouver.'],
+  ['liondance', 'Lion Dance', 'You met the lion dance on East Pender. In Chinese tradition the lion scares off bad luck with drums, cymbals and firecrackers, especially at Lunar New Year, when Vancouver\'s Chinatown parade draws huge crowds.'],
   ['kitspool', 'Saltwater Laps', 'You swam in Kitsilano Pool: 137 m of heated saltwater right on Kits Beach, Canada\'s longest pool, open since 1931.'],
   ['polarbear', 'Polar Bear', 'You charged into English Bay with the Polar Bear Swim. Vancouverites have done it every New Year\'s Day since 1920, often in costume, with thousands of people.'],
   ['leafpile', 'Crunch Time', 'You crashed through a pile of fall leaves. Vancouver\'s maples, oaks and chestnuts drop millions of leaves every October, and every kid knows what they\'re for.'],
@@ -878,6 +880,7 @@ export const SECRETS = [
   ['backyardbear', 'Bear in the Yard', 'A black bear raided a green bin in a North Shore back yard. Lock your bins!'],
   ['hollywoodnorth', 'Hollywood North', 'You walked right into a film shoot. "CUT!"'],
   ['muralhunter', 'Mural Hunter', 'You found 3 of the big murals around Mount Pleasant, Strathcona and Gastown.'],
+  ['banksy', 'Banksy of Vancouver', 'You left 10 pieces of your own street art around the city.'],
   ['dumpsterdive', 'Lane Treasure', 'You found a golden pinecone trophy in a back-lane dumpster.'],
   ['crowfries', 'Crow Heist', 'You watched a crow steal someone\'s fries. Crows remember faces.'],
   // boats (boats.js)
@@ -895,6 +898,35 @@ export const SECRETS = [
   ['sealaboard', 'Stowaway', 'A harbour seal flopped onto your boat for a nap.'],
   ['roguewave', 'Rogue Wave', 'A freak wave tossed your boat. You lived to tell the tale.'],
   ['rubberducks', 'Friendly Floatees', 'You found a flotilla of lost rubber ducks bobbing in the sea.'],
+  // wildlife & plants (fauna.js, flora.js, journal.js)
+  ['spiritbear', 'Spirit Bear', 'You saw a white Kermode bear: a black bear with a rare gene for white fur. BC\'s official mammal.'],
+  ['bearcubs', 'Up the Tree!', 'A mother bear huffed and her cubs scrambled up a tree. Give mom lots of room.'],
+  ['heybear', 'Hey Bear!', 'You calmly made noise and the bear wandered off. Textbook bear safety.'],
+  ['bearfishing', 'Gone Fishing', 'You watched a bear catch a salmon in a North Shore river.'],
+  ['salmonrun', 'The Salmon Run', 'You saw salmon fighting their way upstream to spawn in the fall.'],
+  ['elkbugle', 'The Bugle', 'A bull elk bugled in the Sea-to-Sky valley. The eeriest sound in the forest.'],
+  ['rams', 'Headbangers', 'Two bighorn rams smashed horns right in front of you.'],
+  ['wolfpack', 'The Pack', 'You crossed paths with a grey wolf pack.'],
+  ['moose', 'Moose on the Loose', 'You saw a moose. Bigger than you thought, right?'],
+  ['cougar', 'Ghost Cat', 'You saw a cougar. Most British Columbians never do.'],
+  ['lynx', 'Snow Ghost', 'A Canada lynx padded past on its giant snowshoe paws.'],
+  ['whistler', 'The Whistler', 'A hoary marmot whistled at you. Whistler Mountain is named after them!'],
+  ['skunked', 'Skunked', 'You got too close to a skunk. Everyone can smell it.'],
+  ['seaotter', 'Raft of Otters', 'You found sea otters floating on their backs, holding paws.'],
+  ['sealions', 'Bark Bark', 'A colony of Steller sea lions barked at you from the rocks.'],
+  ['beaverslap', 'Tail Slap', 'A beaver slapped its tail on the water to warn everyone you were coming.'],
+  ['gullheist', 'Seagull Heist', 'A gull snatched your food right out of your hand.'],
+  ['wildfine', 'Don\'t Feed the Wildlife', 'You fed a wild animal and a conservation officer fined you. Worth it? (No.)'],
+  ['naturephotog', 'Nature Photographer', 'You sold photos of 10 different species.'],
+  ['naturalist', 'Naturalist', 'You recorded 10 species in your field guide.'],
+  ['fieldguide', 'Field Guide Pro', 'You recorded 30 species in your field guide.'],
+  ['botanist', 'Botanist', 'You found 15 different BC plants.'],
+  ['ghostpipe', 'Ghost Pipe', 'You found a ghostly white plant that lives without sunlight.'],
+  ['fairyslipper', 'Fairy Slipper', 'You found a tiny pink calypso orchid on the forest floor.'],
+  ['phantomorchid', 'Phantom Orchid', 'You found one of the rarest plants in Canada.'],
+  ['chocolily', 'Chocolate Lily', 'You found a chocolate lily in a Garry oak meadow.'],
+  ['ancientcedar', 'The Old One', 'You stood under a cedar that was already old when Captain Vancouver sailed by.'],
+  ['fairyring', 'Fairy Ring', 'You found a perfect ring of red-and-white mushrooms. Don\'t step inside…'],
 ];
 const SECRET_IDS = new Set(SECRETS.map(s => s[0]));
 export function discover(id) {
@@ -979,6 +1011,7 @@ export function updateMissions(dt) {
   if (!prompt) prompt = boatPrompt(player);   // charter boats (within 9 m of a host; and on-board offers during a charter)
   if (!prompt) prompt = liftPrompt(player);
   if (!prompt) prompt = transitPrompt(player);
+  if (!prompt) prompt = faunaPrompt(player);   // wildlife: make noise at a bear, watch an animal, eat ripe berries (fauna.js / flora.js)
   if (!prompt) prompt = minigamePrompt(player);   // before shops: the pub chalkboards sit right outside pubs that sell pints
   if (!prompt) prompt = activityPrompt(player);   // sports courts/fields too: a café 14 m away used to hide "play tennis"
   if (!prompt) prompt = shopPrompt(player);

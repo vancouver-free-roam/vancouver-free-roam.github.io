@@ -1,9 +1,13 @@
-// Little everyday wildlife around the player: pigeons and crows pecking on sidewalks, gulls by the water,
+﻿// Little everyday wildlife around the player: pigeons and crows pecking on sidewalks, gulls by the water,
 // squirrels in parks. Birds flap away when you come close. Instanced, spawned near the player, recycled when far.
 import * as THREE from 'three';
 import { G, scene, R, pick } from './core.js';
 import { isWater, heightAt, isNorthShoreTown, isRichmond, maskAt } from './terrain.js';
 import { roadGrid, NX, NZ, surfaceY, buildingAt, isDriveType } from './city.js';
+// mountain, forest, shore and park animals live in fauna.js now (real bears, elk, marmots…); plants in flora.js
+import { updateFauna } from './fauna.js';
+import { updateFlora } from './flora.js';
+import { softSpot } from './journal.js';
 
 const M = window.MAP, BIRDS = 220, SQ = 30;
 const mk = (geo, cap) => { const m = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.8 }), cap); m.count = 0; m.frustumCulled = false; m.castShadow = true; m.setColorAt(0, new THREE.Color()); scene.add(m); return m; };
@@ -45,7 +49,9 @@ function spawnSquirrel(px, pz) {
 let spawnT = 0;
 export function updateWildlife(dt, pl) {
   if (!pl.char) return;
-  updateFauna(dt, pl);
+  updateFauna(dt, pl); updateFlora(dt, pl);
+  for (const f of flocks) if (Math.hypot(f.x - pl.x, f.z - pl.z) < 18) softSpot(f.kind);
+  for (const q of squirrels) if (Math.hypot(q.x - pl.x, q.z - pl.z) < 15) softSpot('greysquirrel');
   const px = pl.x, pz = pl.z, onLand = heightAt(px, pz) < 300 && !pl.flying;
   spawnT -= dt;
   if (spawnT < 0 && onLand) { spawnT = 0.7; if (flocks.length < 7) spawnFlock(px, pz); if (squirrels.length < 6) spawnSquirrel(px, pz); }
@@ -93,65 +99,3 @@ export function updateWildlife(dt, pl) {
   for (const m of [sqBody, sqTail]) { m.count = k; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
 }
 
-// ---------- mountain & forest wildlife: deer, mountain goats, black bears, cougars ----------
-function mergeParts(parts) {
-  const pos = [], col = [], c = new THREE.Color();
-  for (const [geo, color, x, y, z, rx = 0, rz = 0] of parts) { let g = geo.index ? geo.toNonIndexed() : geo.clone(); g.rotateX(rx); g.rotateZ(rz); g.translate(x, y, z); pos.push(...g.attributes.position.array); c.set(color); for (let i = 0; i < g.attributes.position.count; i++) col.push(c.r, c.g, c.b); }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals(); return g;
-}
-const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-function quad(body, col, { len = 1.2, hgt = 0.9, wid = 0.4, leg = 0.7, neck = 0, head = 0.3, tail = 0.15, tailCol = col, extra = [] }) {
-  const P = [[B(wid, hgt * 0.45, len), col, 0, leg + hgt * 0.22, 0], [B(head * 0.9, head, head * 1.4), col, 0, leg + hgt * 0.45 + neck, -len / 2 - head * 0.4]];
-  if (neck) P.push([B(head * 0.6, neck + 0.2, head * 0.6), col, 0, leg + hgt * 0.3 + neck / 2, -len / 2], 0);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.push([B(wid * 0.22, leg, wid * 0.22), col, sx * wid * 0.32, leg / 2, sz * len * 0.38]);
-  P.push([B(0.08, 0.08, tail), tailCol, 0, leg + hgt * 0.3, len / 2 + tail / 2, 0.5]);
-  return mergeParts(P.filter(p => p).concat(extra));
-}
-const FAUNA = {
-  deer: { geo: quad(0, '#8b6a48', { len: 1.3, hgt: 0.8, wid: 0.38, leg: 0.8, neck: 0.4, head: 0.28, tail: 0.18, tailCol: '#f4f1e8', extra: [[B(0.04, 0.4, 0.04), '#d9c8a8', -0.1, 2.05, -1.0, 0, 0.4], [B(0.04, 0.4, 0.04), '#d9c8a8', 0.1, 2.05, -1.0, 0, -0.4]] }), cap: 14, flee: 32, speed: 7, max: 10 },
-  goat: { geo: quad(0, '#efeee6', { len: 1.1, hgt: 0.85, wid: 0.45, leg: 0.6, neck: 0.15, head: 0.3, tail: 0.1, extra: [[B(0.05, 0.25, 0.05), '#1a1a1a', -0.08, 1.4, -0.75, -0.3], [B(0.05, 0.25, 0.05), '#1a1a1a', 0.08, 1.4, -0.75, -0.3]] }), cap: 10, flee: 22, speed: 4, max: 7 },
-  bear: { geo: quad(0, '#16120f', { len: 1.6, hgt: 1.1, wid: 0.7, leg: 0.55, head: 0.42, tail: 0.08 }), cap: 3, flee: 0, speed: 1.4, max: 2 },
-  cougar: { geo: quad(0, '#a8875c', { len: 1.5, hgt: 0.6, wid: 0.36, leg: 0.5, head: 0.3, tail: 0.9 }), cap: 2, flee: 45, speed: 9, max: 1 },
-};
-const faunaMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
-for (const f of Object.values(FAUNA)) { f.im = new THREE.InstancedMesh(f.geo, faunaMat, f.cap); f.im.count = 0; f.im.frustumCulled = false; f.im.castShadow = true; scene.add(f.im); }
-const fauna = [];
-let faunaT = 0, bearWarned = 0;
-function wild(x, z) { const h = heightAt(x, z); return h > 25 && !isWater(x, z) && !buildingAt(x, z) && !isNorthShoreTown(x, z, h) && !isRichmond(x, z) && maskAt(x, z) === -1 ? h : null; }
-function spawnFauna(pl) {
-  const a = Math.random() * 6.28, r = 90 + Math.random() * 150, x = pl.x + Math.cos(a) * r, z = pl.z + Math.sin(a) * r, h = wild(x, z); if (h === null) return;
-  const slope = Math.abs(heightAt(x + 8, z) - heightAt(x - 8, z)) + Math.abs(heightAt(x, z + 8) - heightAt(x, z - 8)), count = k => fauna.filter(f => f.k === k).length, night = (G.night || 0) > 0.5;
-  let k = null;
-  if (h > 1150 && slope > 6) k = 'goat';
-  else if (h < 1400 && Math.random() < 0.06 && count('bear') < FAUNA.bear.max) k = 'bear';
-  else if (h < 1300 && Math.random() < (night ? 0.06 : 0.015) && count('cougar') < FAUNA.cougar.max) k = 'cougar';
-  else if (h < 1300) k = 'deer';
-  if (!k || count(k) >= FAUNA[k].max) return;
-  const n = k === 'deer' ? 1 + Math.floor(Math.random() * 3) : k === 'goat' ? 1 + Math.floor(Math.random() * 3) : 1;
-  for (let i = 0; i < n && count(k) < FAUNA[k].max; i++) fauna.push({ k, x: x + R(-6, 6), z: z + R(-6, 6), yaw: Math.random() * 6.28, tx: null, wait: R(0, 4), flee: 0, ph: Math.random() * 6 });
-}
-function updateFauna(dt, pl) {
-  faunaT -= dt;
-  const outThere = !pl.transit && wild(pl.x, pl.z) !== null;
-  if (faunaT < 0 && outThere) { faunaT = 1.5; if (fauna.length < 14) spawnFauna(pl); }
-  for (let i = fauna.length - 1; i >= 0; i--) if (Math.hypot(fauna[i].x - pl.x, fauna[i].z - pl.z) > 380) fauna.splice(i, 1);
-  const n = {}; for (const k in FAUNA) n[k] = 0;
-  const _m4 = new THREE.Matrix4(), _q4 = new THREE.Quaternion(), _v4 = new THREE.Vector3(), _s4 = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0);
-  for (const f of fauna) {
-    const S = FAUNA[f.k], d = Math.hypot(f.x - pl.x, f.z - pl.z);
-    if (S.flee && d < S.flee) f.flee = 4;
-    if (f.k === 'bear' && d < 14 && G.t - bearWarned > 30) { bearWarned = G.t; import('./ui.js').then(m => m.ui.toast('🐻 A black bear!', 'Stay calm, talk to it, and back away slowly. Do NOT run. (It is more scared of you. Probably.)', 4500)); }
-    let sp = 0;
-    if (f.flee > 0) { f.flee -= dt; const ax = f.x - pl.x, az = f.z - pl.z, L = Math.hypot(ax, az) || 1; f.tx = f.x + ax / L * 30; f.tz = f.z + az / L * 30; sp = S.speed; }
-    else { f.wait -= dt; if (f.wait < 0 && f.tx === null) { f.tx = f.x + R(-25, 25); f.tz = f.z + R(-25, 25); } sp = S.speed * 0.18; }
-    if (f.tx !== null) {
-      const dx = f.tx - f.x, dz = f.tz - f.z, L = Math.hypot(dx, dz);
-      if (L < 0.5) { f.tx = null; f.wait = R(2, 8); }
-      else { const st = Math.min(L, sp * dt), nx = f.x + dx / L * st, nz = f.z + dz / L * st; if (wild(nx, nz) !== null) { f.x = nx; f.z = nz; } else f.tx = null; f.yaw = Math.atan2(-dx, -dz); f.ph += dt * sp * 3; }
-    }
-    if (n[f.k] >= S.cap) continue;
-    const y = heightAt(f.x, f.z) + (f.tx !== null ? Math.abs(Math.sin(f.ph)) * (f.flee > 0 ? 0.25 : 0.04) : 0);
-    _q4.setFromAxisAngle(up, f.yaw); _m4.compose(_v4.set(f.x, y, f.z), _q4, _s4); S.im.setMatrixAt(n[f.k]++, _m4);
-  }
-  for (const k in FAUNA) { FAUNA[k].im.count = n[k]; FAUNA[k].im.instanceMatrix.needsUpdate = true; }
-}

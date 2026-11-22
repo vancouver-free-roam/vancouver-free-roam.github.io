@@ -13,6 +13,7 @@ import { surfaceY, buildingAt, nearestRoad } from './city.js';
 import { setColliders } from './colliders.js';
 import { ui } from './ui.js';
 import { discover } from './missions.js';
+import { softSpot } from './journal.js';
 
 const M = window.MAP, CH = 300;
 // ---------- indexes: houses and areas by chunk ----------
@@ -183,7 +184,7 @@ function updateCritters(dt, pl) {
   for (let i = critters.length - 1; i >= 0; i--) {
     const c = critters[i], d = Math.hypot(c.x - pl.x, c.z - pl.z);
     c.life -= dt; const scared = d < (c.k === 'coyote' ? 25 : 7);
-    if (scared) { c.yaw = Math.atan2(pl.x - c.x, pl.z - c.z); if (!c.told) { c.told = true; if (c.k === 'raccoon') { ui.toast('🦝 Trash pandas!', 'A raccoon family on their nightly rounds. They know which bins have the good stuff.', 3500); discover('raccoons'); } else { ui.toast('🐺 A coyote!', 'Coyotes live right in the city: Stanley Park, Pacific Spirit, even backyards. It trots off without a sound.', 3500); discover('coyote'); } } }
+    if (scared) { c.yaw = Math.atan2(pl.x - c.x, pl.z - c.z); if (!c.told) { c.told = true; softSpot(c.k); if (c.k === 'raccoon') { ui.toast('🦝 Trash pandas!', 'A raccoon family on their nightly rounds. They know which bins have the good stuff.', 3500); discover('raccoons'); } else { ui.toast('🐺 A coyote!', 'Coyotes live right in the city: Stanley Park, Pacific Spirit, even backyards. It trots off without a sound.', 3500); discover('coyote'); } } }
     else c.yaw += Math.sin(G.t * 0.5 + c.ph + i) * dt * 0.6;
     const sp = c.sp * (scared ? 2.4 : 1), nx = c.x - Math.sin(c.yaw) * sp * dt, nz = c.z - Math.cos(c.yaw) * sp * dt;
     if (!buildingAt(nx, nz) && !isWater(nx, nz)) { c.x = nx; c.z = nz; } else c.yaw += 2;

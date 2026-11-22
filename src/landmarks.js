@@ -11,7 +11,7 @@ export const animated = [];       // things that move every frame
 const at = (lat, lon) => { const [x, z] = toXZ(lat, lon); return { x, z, y: heightAt(x, z) }; };
 function spot(id, name, lat, lon, extra = {}) { const p = at(lat, lon); if (ON_LAND.has(id)) Object.assign(p, landNear(p.x, p.z)); SPOTS[id] = { id, name, ...p, ...extra }; return SPOTS[id]; }
 // plaza pieces whose real spot the map's coastline puts just offshore: step onto the nearest dry ground
-const ON_LAND = new Set(['orca', 'drop', 'cauldron']);
+const ON_LAND = new Set(['orca', 'drop', 'cauldron', 'market']);   // (market: the point is the hall itself; step to the open ground at its door)
 function landNear(x, z) {   // open ground: not water, not inside a building (the Convention Centre's outline covers the real plaza)
   const open = (X, Z) => !isWater(X, Z) && !buildingAt(X, Z);
   if (open(x, z)) return { x, z, y: heightAt(x, z) };
@@ -291,13 +291,32 @@ export function buildLandmarks() {
 
   // Granville Island: the painted "Giants" silos + market sign
   { const p = spot('giants', 'Granville Island Giants', 49.2713, -123.1360); const g = new THREE.Group();
-    const cols = ['#e94f37', '#f6c445', '#3f88c5', '#44bba4', '#a23b72', '#f18f01'];
+    // each silo is painted all the way round as one giant figure: a big yellow face under a patterned hat, patterned
+    // clothes, arms wrapping round the curve (in the spirit of the real 2014 mural, not a copy of it)
+    const cols = ['#e94f37', '#f6c445', '#3f88c5', '#44bba4', '#a23b72', '#f18f01', '#2d3047', '#93b7be'];
+    const pattern = (c, x, y, w, h, k, a, b) => { c.fillStyle = a; c.fillRect(x, y, w, h); c.fillStyle = b;
+      if (k === 0) for (let s = 0; s < w; s += 22) c.fillRect(x + s, y, 10, h);                                   // stripes
+      else if (k === 1) for (let yy = y; yy < y + h; yy += 26) for (let xx = x; xx < x + w; xx += 26) { c.beginPath(); c.arc(xx + 13, yy + 13, 6, 0, 7); c.fill(); }   // dots
+      else if (k === 2) for (let yy = y; yy < y + h; yy += 30) for (let xx = x; xx < x + w; xx += 30) { c.beginPath(); c.moveTo(xx + 15, yy); c.lineTo(xx + 30, yy + 15); c.lineTo(xx + 15, yy + 30); c.lineTo(xx, yy + 15); c.fill(); }   // diamonds
+      else for (let yy = y; yy < y + h; yy += 18) c.fillRect(x, yy, w, 7); };                                       // bands
     for (let i = 0; i < 6; i++) {
-      const tex = canvasTex(256, 512, (c, w, h) => { c.fillStyle = cols[i]; c.fillRect(0, 0, w, h); for (let k = 0; k < 40; k++) { c.fillStyle = cols[(i + k) % 6]; c.fillRect(Math.random() * w, Math.random() * h, 20 + Math.random() * 60, 10 + Math.random() * 40); } c.fillStyle = '#f1c9a5'; c.beginPath(); c.arc(w / 2, h * 0.25, 60, 0, 7); c.fill(); c.fillStyle = '#111'; c.fillRect(w / 2 - 30, h * 0.22, 12, 12); c.fillRect(w / 2 + 18, h * 0.22, 12, 12); }, false);
-      addMesh(new THREE.CylinderGeometry(4, 4, 22, 20), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }), (i % 3) * 8.5, 11, Math.floor(i / 3) * 8.5, g);
+      const tex = canvasTex(512, 1024, (c, w, h) => {
+        const A = cols[i], B = cols[(i + 3) % cols.length], C2 = cols[(i + 5) % cols.length], D = cols[(i + 2) % cols.length];
+        pattern(c, 0, 0, w, h, (i + 1) % 4, C2, D);                                     // clothes all over (trousers at the bottom)
+        pattern(c, 0, h * 0.32, w, h * 0.38, i % 4, A, B);                               // shirt
+        c.fillStyle = '#f2c230'; c.fillRect(w * 0.06, h * 0.4, w * 0.12, h * 0.26); c.fillRect(w * 0.82, h * 0.4, w * 0.12, h * 0.26);   // yellow hands round the side
+        c.fillStyle = '#f2c230'; c.beginPath(); c.ellipse(w / 2, h * 0.2, w * 0.2, h * 0.13, 0, 0, 7); c.fill();          // the big yellow face
+        c.fillStyle = '#1a1a1a'; c.beginPath(); c.ellipse(w / 2 - 36, h * 0.19, 9, 6, 0, 0, 7); c.ellipse(w / 2 + 36, h * 0.19, 9, 6, 0, 0, 7); c.fill();   // small eyes
+        c.fillStyle = '#d98f1f'; c.fillRect(w / 2 - 6, h * 0.2, 12, 26);                                                // nose
+        c.strokeStyle = '#1a1a1a'; c.lineWidth = 4; c.beginPath(); c.arc(w / 2, h * 0.255, 22, 0.2, Math.PI - 0.2); c.stroke();
+        pattern(c, w * 0.26, 0, w * 0.48, h * 0.075, (i + 2) % 4, B, C2);                                              // hat / hood
+        c.fillStyle = 'rgba(0,0,0,0.08)'; for (let k = 0; k < 9; k++) c.fillRect(0, k * h / 9, w, 3);                  // the silo's pour lines
+      }, false);
+      addMesh(new THREE.CylinderGeometry(4, 4, 22, 28), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }), (i % 3) * 8.5, 11, Math.floor(i / 3) * 8.5, g);
     }
-    place(g, p); const ms = spot('market', 'Granville Island Public Market', 49.2712, -123.1340);
-    const sign = textPlane('PUBLIC MARKET', 12, 2, '#b3261e', '#fff', 'bold 110px Arial', '#f6c445'); sign.position.set(ms.x, ms.y + 9, ms.z); scene.add(sign); }
+    const conc = std('#b9b6ae', { roughness: 0.9 });   // the conveyor gallery along the tops + the cement plant's headhouse
+    addMesh(new THREE.BoxGeometry(19, 2.6, 2.6), conc, 8.5, 23.3, 4.25, g); addMesh(new THREE.BoxGeometry(5, 6, 5), conc, -2.5, 25, 4.25, g);
+    place(g, p); spot('market', 'Granville Island Public Market', 49.2727, -123.1350); }   // (the real market hall at the island's north tip, beside Bridges)   // (the PUBLIC MARKET sign is mounted on the building by districts.js)
 
   // Kits beach + pool, Second Beach
   spot('kits', 'Kitsilano Beach', 49.2745, -123.1540);

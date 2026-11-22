@@ -8,6 +8,7 @@ import { SPOTS } from './landmarks.js';
 import { discover, state, setWaypoint } from './missions.js';
 import { ui } from './ui.js';
 import { sfx } from './sound.js';
+import { softSpot } from './journal.js';
 
 // ---------- models (coloured parts merged into one geometry; forward = -z) ----------
 function blob(parts) {
@@ -65,7 +66,7 @@ function shorePoint(pl, rMin, rMax) {   // a beach/rock spot right next to the w
   return null;
 }
 const seen = new Set();
-function sighted(id, title, text) { if (seen.has(id)) return; seen.add(id); ui.toast(title, text, 4200); try { discover(id); } catch (e) { } }
+function sighted(id, title, text) { try { const j = { orcapod: 'orca', humpback: 'humpback', dolphins: 'dolphin', seal: 'harbourseal', heron: 'heron', eagle: 'baldeagle', caddy: 'caddy' }[id]; if (j) softSpot(j); } catch (e) { } if (seen.has(id)) return; seen.add(id); ui.toast(title, text, 4200); try { discover(id); } catch (e) { } }
 
 // ---------- the animals ----------
 const A = [];

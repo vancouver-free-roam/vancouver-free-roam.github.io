@@ -87,7 +87,7 @@ function addItem(type, x, z, yaw, h, extra = {}) {
 let gPos = [], gUv = [], gIdx = [], graffMesh = null;
 function tagQuad(cx_, cy, cz, nx, nz, w, hgt, cell) {
   const rx = nz, rz = -nx, u0 = (cell % 4) / 4, v0 = 1 - (Math.floor(cell / 4) + 1) / 8, i0 = gPos.length / 3;
-  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { gPos.push(cx_ + rx * a * w / 2 + nx * 0.05, cy + b * hgt / 2, cz + rz * a * w / 2 + nz * 0.05); gUv.push(u0 + (a + 1) / 2 * 0.25, v0 + (b + 1) / 2 * 0.125); }
+  for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { gPos.push(cx_ + rx * a * w / 2 + nx * 0.17, cy + b * hgt / 2, cz + rz * a * w / 2 + nz * 0.17); gUv.push(u0 + (a + 1) / 2 * 0.25, v0 + (b + 1) / 2 * 0.125); }
   gIdx.push(i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3);
 }
 // the building wall nearest to (x, z) that faces it, roughly parallel to (ux, uz)
@@ -125,7 +125,7 @@ function rebuild(px, pz) {
         else if (h2 < 0.34) { for (let k = 0; k < 2 + Math.floor(h * 2); k++) addItem('recycle', x + ux * k * 0.75, z + uz * k * 0.75, yaw + R(-0.2, 0.2), hash2(k, s + e.a)); }
         else if (h2 < 0.4) addItem('pallet', x, z, yaw + h, h);
         else if (h2 < 0.47) addItem('box', x, z, yaw + h * 3, h);
-        else if (h2 < 0.49) addItem('mattress', x, z, yaw + 0.3, h);
+        else if (h2 < 0.48) addItem('mattress', x, z, yaw + 0.3, h);
         else if (h2 < 0.505) { const c = addItem('couch', x, z, yaw + (side > 0 ? -Math.PI / 2 : Math.PI / 2), h); }
         else if (h2 < 0.53) addItem('cart', x, z, yaw + h * 6, h);
         // graffiti on the garage / building wall beside the lane
@@ -282,7 +282,7 @@ function placeMurals() {
     if (!best) continue;
     const gy = walkY(best.mx + best.nx, best.mz + best.nz), w = Math.min(best.L - 1, 22), h = Math.min(w / 2, best.top - gy - 0.6); if (h < 4) continue;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: muralTex(k), roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
-    mesh.position.set(best.mx + best.nx * 0.07, gy + 0.4 + h / 2, best.mz + best.nz * 0.07); mesh.rotation.y = Math.atan2(best.nx, best.nz); mesh.receiveShadow = true; mesh.visible = false; scene.add(mesh);
+    mesh.position.set(best.mx + best.nx * 0.2, gy + 0.4 + h / 2, best.mz + best.nz * 0.2); mesh.rotation.y = Math.atan2(best.nx, best.nz); mesh.receiveShadow = true; mesh.visible = false; scene.add(mesh);
     murals.push({ ...m, mesh, x: mesh.position.x, z: mesh.position.z });
   }
 }
@@ -296,10 +296,18 @@ function initBalls() {
   const mk = (r, tex) => { const m = new THREE.InstancedMesh(new THREE.SphereGeometry(r, 16, 12), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5 }), BALLS); m.count = 0; m.castShadow = true; m.frustumCulled = false; scene.add(m); return m; };
   soccerIM = mk(0.11, soccer); beachIM = mk(0.3, beach);
 }
+// parks / beaches near a point (a lazy 500 m grid over MAP.areas, so we never sample the whole province)
+let _ag = null;
+function areasNear(x, z, r, kinds) {
+  if (!_ag) { _ag = new Map(); for (const a of M.areas) { if (a.line || !a.p || a.p.length < 6) continue; const k = Math.floor(a.p[0] / 500) * 100003 + Math.floor(a.p[1] / 500); let l = _ag.get(k); if (!l) _ag.set(k, l = []); l.push(a); } }
+  const out = []; for (let i = Math.floor((x - r) / 500); i <= Math.floor((x + r) / 500); i++) for (let j = Math.floor((z - r) / 500); j <= Math.floor((z + r) / 500); j++) for (const a of _ag.get(i * 100003 + j) || []) if (kinds(a.k)) out.push(a);
+  return out;
+}
 function spawnBall(px, pz) {
   const beachy = G.season === 'summer' && G.night < 0.3 && G.wet < 0.2;
+  const near = areasNear(px, pz, 300, k => k === 'park' || k === 'pitch' || k === 'grass' || (beachy && k === 'beach')); if (!near.length) return;
   for (let k = 0; k < 8; k++) {
-    const a = M.areas[Math.floor(Math.random() * M.areas.length)]; if (a.line || !(a.k === 'park' || a.k === 'pitch' || a.k === 'grass' || (beachy && a.k === 'beach'))) continue;
+    const a = pick(near);
     const x = a.p[0] + R(-12, 12), z = a.p[1] + R(-12, 12), d = Math.hypot(x - px, z - pz); if (d < 25 || d > 140 || isWater(x, z) || buildingAt(x, z)) continue;
     balls.push({ x, z, y: walkY(x, z) + 1, vx: 0, vy: 0, vz: 0, beach: a.k === 'beach', spin: new THREE.Quaternion(), r: a.k === 'beach' ? 0.3 : 0.11 }); return;
   }

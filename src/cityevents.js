@@ -68,12 +68,20 @@ function sidewalkSpot(px, pz, filter, min = 50, max = 170, extra = 1.5) {
   }
   return null;
 }
+// parks / beaches near a point (a lazy 500 m grid over MAP.areas, so we never sample the whole province)
+let _ag = null;
+function areasNear(x, z, r, kinds) {
+  if (!_ag) { _ag = new Map(); for (const a of M.areas) { if (a.line || !a.p || a.p.length < 6) continue; const k = Math.floor(a.p[0] / 500) * 100003 + Math.floor(a.p[1] / 500); let l = _ag.get(k); if (!l) _ag.set(k, l = []); l.push(a); } }
+  const out = []; for (let i = Math.floor((x - r) / 500); i <= Math.floor((x + r) / 500); i++) for (let j = Math.floor((z - r) / 500); j <= Math.floor((z + r) / 500); j++) for (const a of _ag.get(i * 100003 + j) || []) if (kinds(a.k)) out.push(a);
+  return out;
+}
 const PARKY = new Set(['park', 'grass', 'garden', 'recreation_ground', 'village_green']);
-function parkSpot(px, pz, need = 8, min = 50, max = 170) {
-  for (let k = 0; k < 14; k++) {
-    const a = M.areas[Math.floor(Math.random() * M.areas.length)]; if (a.line || !PARKY.has(a.k) || Math.abs(a.p[0] - px) > max + 300 || Math.abs(a.p[1] - pz) > max + 300) continue;
-    let cx = 0, cz = 0, n = Math.min(a.p.length / 2, 60); for (let i = 0; i < n; i++) { cx += a.p[i * 2]; cz += a.p[i * 2 + 1]; } cx /= n; cz /= n;
-    const x = cx + R(-30, 30), z = cz + R(-30, 30), d = Math.hypot(x - px, z - pz); if (d < min || d > max || !inPoly(x, z, a.p) || isWater(x, z) || tooClose(x, z)) continue;
+function parkSpot(px, pz, need = 8, min = 50, max = 170, fields = false) {
+  const near = areasNear(px, pz, max + 300, k => PARKY.has(k) || (fields && k === 'pitch')); if (!near.length) return null;
+  for (let k = 0; k < 40; k++) {
+    const a = pick(near);
+    let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (let i = 0; i < a.p.length; i += 2) { x0 = Math.min(x0, a.p[i]); x1 = Math.max(x1, a.p[i]); z0 = Math.min(z0, a.p[i + 1]); z1 = Math.max(z1, a.p[i + 1]); }
+    const x = R(x0, x1), z = R(z0, z1), d = Math.hypot(x - px, z - pz); if (d < min || d > max || !inPoly(x, z, a.p) || isWater(x, z) || tooClose(x, z)) continue;
     let ok = true; for (const [dx, dz] of [[need, 0], [-need, 0], [0, need], [0, -need], [0, 0]]) if (buildingAt(x + dx, z + dz) || isWater(x + dx, z + dz) || nearestRoad(x + dx, z + dz, 3, r => r.t <= 6)) ok = false;
     if (ok && !blockedAt(x, z, need * 0.5)) return { x, z, yaw: R(0, 6.28), area: a };
   }
@@ -158,7 +166,7 @@ const TYPES = {
     end(ev) { if (ev.rain) scene.remove(ev.rain); },
   },
   march: {
-    w: () => (day() && G.wet < 0.5 && H() > 10 && H() < 18 ? 1 : 0), spot: (px, pz) => sidewalkSpot(px, pz, (r, e) => r.t >= 2 && r.t <= 4 && e.len > 70, 50, 150, 1.6),
+    w: () => (day() && G.wet < 0.5 && H() > 10 && H() < 18 ? 1 : 0), spot: (px, pz) => sidewalkSpot(px, pz, (r, e) => r.t >= 2 && r.t <= 4 && e.len > 40, 50, 150, 1.6),
     build(ev) {
       const { e, r } = ev.sp, L = e.len; ev.L = L; ev.u = ev.sp.t * L; ev.dirn = Math.random() < 0.5 ? 1 : -1; ev.off = r.w / 2 + 1.6; ev.side = Math.sign(Math.cos(ev.yaw) * -1) || 1;
       const n = 10 + Math.floor(Math.random() * 5); ev.slog = [];
@@ -190,7 +198,7 @@ const TYPES = {
     end(ev) { scene.remove(ev.signs); ev.signs.geometry.dispose(); },
   },
   market: {
-    w: () => (H() > 8.5 && H() < 15 && G.season !== 'winter' && G.wet < 0.5 ? 1.5 : 0), spot: (px, pz) => parkSpot(px, pz, 11),
+    w: () => (H() > 8.5 && H() < 15 && G.season !== 'winter' && G.wet < 0.5 ? 1.5 : 0), spot: (px, pz) => parkSpot(px, pz, 8, 50, 170, true),
     build(ev) {
       const g = group(ev), parts = [], COLS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#fb8c00', '#8e24aa', '#f4f4f4'];
       ev.stalls = [];
@@ -215,7 +223,7 @@ const TYPES = {
     use(ev, pl) { for (const s of ev.stalls) if (near(ev, pl, s.lx, s.lz, 1.8)) return [`${s.item[0]} ($${s.item[1]})`, () => { if (pl.money < s.item[1]) { ui.toast('Not enough cash', 'Farmers\' markets: famously not cheap.'); return; } pl.money -= s.item[1]; pl.health = Math.min(100, pl.health + s.item[2]); sfx.coin(); ui.toast(s.item[0], pick(['Local! Organic! Small-batch! Very Vancouver.', 'The farmer tells you its life story. Worth it.', 'You also accidentally signed up for a CSA box.']) + (s.item[2] ? ` (+${s.item[2]} health)` : ''), 3000); }]; return false; },
   },
   foodtruck: {
-    w: () => ((H() > 11 && H() < 14.5) || (H() > 17 && H() < 21.5) ? 2.2 : 0.3), spot: (px, pz) => sidewalkSpot(px, pz, r => r.t >= 2 && r.t <= 5 && r.w >= 9, 50, 160, 1.4),
+    w: () => ((H() > 11 && H() < 14.5) || (H() > 17 && H() < 21.5) ? 2.2 : 0.3), spot: (px, pz) => sidewalkSpot(px, pz, r => r.t >= 2 && r.t <= 5 && r.w >= 7, 50, 160, 1.4),
     build(ev) {
       const [name, colr] = ev.truck = pick(TRUCKS), g = group(ev);
       g.add(bake([[B(6.5, 2.5, 2.3), colr, 0, 1.65, 2.6], [B(2, 1.5, 2.3), '#f4f4f4', 3.9, 1.3, 2.6], [B(1.4, 0.7, 2.32), '#2a3540', 4.3, 1.75, 2.6], [B(2.6, 1, 0.04), '#1e1e1e', -0.5, 1.9, 1.44], [B(2.8, 0.06, 0.7), '#f4f4f4', -0.5, 2.5, 1.1, 0.25], [B(2.6, 0.08, 0.35), '#bdbdbd', -0.5, 1.4, 1.3],
@@ -232,7 +240,7 @@ const TYPES = {
     use: (ev, pl) => near(ev, pl, -0.5, 1.0, 2.6) && [`🌮 Order from ${ev.truck[0]} ($9)`, () => { if (pl.money < 9) { ui.toast('Not enough cash', 'Food trucks don\'t take IOUs.'); return; } pl.money -= 9; pl.health = 100; sfx.coin(); say(ev.worker, 'Enjoy!', 2000); ui.toast('🌮 ' + ev.truck[0], pick(['Worth the line. Fully healed.', 'You eat it standing up in the drizzle, like a true local. Fully healed.', 'A seagull watched you eat the whole thing. Fully healed.']), 3000); if (Math.random() < 0.25) setTimeout(() => ui.toast('🐦 A crow is watching your food…', 'Crows here are smart. They remember faces. Eat fast.', 3000), 2500); }],
   },
   dogpark: {
-    w: () => (day() && dry() ? 2 : 0), spot: (px, pz) => parkSpot(px, pz, 12),
+    w: () => (day() && dry() ? 2 : 0), spot: (px, pz) => parkSpot(px, pz, 8, 50, 170, true),
     build(ev) {
       ev.owner = addActor(ev, 0, 0, 'idle', { cup: Math.random() < 0.5 ? '#f4f1ea' : null }, 0, 5); ev.name = pick(['BISCUIT', 'NOODLE', 'MOOSE', 'PICKLE', 'WAFFLES', 'BEAR', 'TOFU']);
       const col = pick(['#c8913a', '#1a1a1a', '#e8d9b0', '#7a5230', '#f2f2f2']);
@@ -281,7 +289,7 @@ const TYPES = {
     end(ev) { scene.remove(ev.bike); },
   },
   parade: {
-    w: () => (special() && day() && !daily.has('parade' + G.doy) ? 8 : day() && dry() && !daily.has('parade' + G.doy) ? 0.25 : 0), spot: (px, pz) => sidewalkSpot(px, pz, (r, e) => r.t >= 2 && r.t <= 4 && e.len > 110, 40, 160, 0),
+    w: () => (special() && day() && !daily.has('parade' + G.doy) ? 8 : day() && dry() && !daily.has('parade' + G.doy) ? 0.25 : 0), spot: (px, pz) => sidewalkSpot(px, pz, (r, e) => r.t >= 2 && r.t <= 4 && e.len > 60, 40, 160, 0),
     build(ev) {
       daily.add('parade' + G.doy); const th = ev.theme = special() || pick(['vancouver', 'pride', 'canada']);
       const T = { canada: ['Canada Day Parade', ['#d52b1e', '#ffffff']], pride: ['Pride Parade', ['#e40303', '#ff8c00', '#ffed00', '#008026', '#004dff', '#750787']], lunar: ['Lunar New Year Parade', ['#c62828', '#ffd600']], vaisakhi: ['Vaisakhi Parade', ['#ff9800', '#1565c0', '#ffffff']], santa: ['Santa Claus Parade', ['#c62828', '#2e7d32', '#ffffff']], vancouver: ['Rain City Day Parade', ['#29b6f6', '#66bb6a', '#ffca28', '#ec407a']] }[th];
@@ -649,7 +657,7 @@ export function updateCityEvents(dt, pl) {
   const list = []; for (const ev of events) for (const a of ev.actors) { a.visible = Math.hypot(a.x - pl.x, a.z - pl.z) < 200; list.push(a); }
   crowd.draw(list);
   updateLeaves(dt, pl); updateSteam(dt, pl); updateSprinklers(dt, pl); updateRipples(dt, pl); updateGusts(dt, pl);
-  updateUfo(dt, pl); updateBear(dt, pl); updateBalloons(dt, pl); updateTubes(dt, pl);
+  updateUfo(dt, pl); /* backyard bin bears: fauna.js updateBinBear */ updateBalloons(dt, pl); updateTubes(dt, pl);
 }
 // everyone in events who can show a speech bubble (main.js passes these to updateBubbles)
 export function lifeTalkers() {

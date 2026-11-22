@@ -22,6 +22,7 @@ import { refreshMarkers } from './missions.js';
 import { updateNightLights } from './streetlights.js';
 import { updateStreetProps } from './streetprops.js';
 import { updateWildlife } from './wildlife.js';
+import { journalHtml, journalSave, journalLoad } from './journal.js';
 import { updateSocial } from './social.js';
 import { initStorefronts, updateStorefronts } from './storefronts.js';
 import { initDetails, updateDetails, artCamera } from './details.js';
@@ -29,6 +30,7 @@ import { initQEPark, updateQEPark } from './qepark.js';
 import { initSkyline, updateSkyline } from './skyline.js';
 import { updateTreeSeason } from './treeseason.js';
 import { initBeaches, updateBeaches } from './beaches.js';
+import { initDistricts, updateDistricts } from './districts.js';
 import { initSnowFun, updateSnowFun, snowMarkers } from './snowfun.js';
 import { initSlopes, updateSlopes, slopeMarkers } from './slopes.js';
 import { initPistes, updatePistes } from './pistes.js';
@@ -51,6 +53,7 @@ import { updateBreakables } from './breakables.js';
 import { initCityLife, updateCityLife } from './citylife.js';
 import { initCityEvents, updateCityEvents, lifeTalkers } from './cityevents.js';
 import { initAdverts, updateAdverts } from './adverts.js';
+import { initPaint, updatePaint } from './paint.js';
 import { renderWorld, updateCumulus } from './post.js';
 import { initRamps, rampMarkers, setDiscover } from './moves.js';
 import { discover as discoverSecret } from './missions.js';
@@ -75,7 +78,7 @@ async function load() {
   await progress('Building 38,000 real buildings and 32,000 streets… (this takes a moment)', 0.3);
   initCity((m, f) => { steps.push([m, f]); });
   await progress('Building landmarks…', 0.82);
-  buildLandmarks(); initSkyline(); initBeaches(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
+  buildLandmarks(); initSkyline(); initBeaches(); initDistricts(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initPaint(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
   await progress('Drawing the maps…', 0.9);
   buildMaps();
   await progress('Ready!', 1);
@@ -112,7 +115,7 @@ function start(c, save = null) {
     if (typeof save.hour === 'number') G.hour = save.hour;
     player.teleport(save.x, save.z); refreshMarkers();
   } else clearSave();
-  shopLoad(save?.shop); mgLoad(save?.mg);
+  shopLoad(save?.shop); mgLoad(save?.mg); journalLoad(save?.jr);
   prebuildChunksNear(player.x, player.z);
   G.preview = false; G.paused = false;
   $('who').textContent = c.face + ' ' + c.name;
@@ -209,6 +212,8 @@ function openPhone(tab = phoneTab) {
     body.querySelectorAll('[data-ride]').forEach(b => b.onclick = () => { exitHome(); if (player.vehicle) player.exitVehicle(true); if (callRide(b.dataset.ride)) { closePhone(); ui.toast('🔑 Your ride is here', 'Press F to get in.', 2500); } });
     body.querySelectorAll('[data-home]').forEach(b => b.onclick = () => { if (activeMission()) { ui.toast('Finish your mission first'); return; } exitHome(); goHome(b.dataset.home); prebuildChunksNear(player.x, player.z); closePhone(); enterHome(b.dataset.home); });
     body.querySelectorAll('[data-wear]').forEach(b => b.onclick = () => { wear(b.dataset.wear); openPhone('wallet'); });
+  } else if (tab === 'nature') {   // the wildlife & plant field guide (journal.js)
+    const draw = f => { body.innerHTML = journalHtml(f); body.querySelectorAll('[data-jr]').forEach(b => b.onclick = () => draw(b.dataset.jr)); }; draw('fauna');
   } else if (tab === 'eggs') {
     body.innerHTML = `<p><b>${state.found.size}/${SECRETS.length}</b> secrets found. Explore to find the rest!</p>` + SECRETS.map(([id, n, d]) => state.found.has(id) ? `<div class="egg">✅ <b>${n}</b> — ${d}</div>` : `<div class="egg">❓ ???</div>`).join('');
   } else {
@@ -224,8 +229,10 @@ function openPhone(tab = phoneTab) {
       <p><b>Buses:</b> find a bus shelter (🚌 on the minimap) and press <kbd>E</kbd>. Routes: 99 B-Line along Broadway to UBC, R4 along 41st Ave, R5 along Hastings to SFU, R2 along Marine Drive, 5 Robson, 250 to Horseshoe Bay and 232 up to Grouse Mountain. Buses drive at real speed: <kbd>Space</kbd> = fast-forward, <kbd>Space</kbd> again = skip to your stop.</p>
       <p><b>Seasons:</b> spring 🌸, summer ☀️, fall 🍂 and winter ❄️ change every 2 game days (or pick one in the phone's <b>World</b> tab, where you can also set the weather and time of day). Winter means snow in the city and short days; summer means long days and fireworks.</p>
       <p><b>Weather:</b> Vancouver weather changes by itself: mostly sun and puffy clouds, sometimes grey skies, drizzle, rain, fog and the odd thunderstorm (rain turns to snow up the mountains). Roads get slippery in the rain. <kbd>U</kbd> opens your umbrella · <kbd>Y</kbd> = weather machine (change the weather) · watch for rainbows after the rain!</p>
+      <p>🎨 <b>Street art &amp; city life:</b> press <kbd>I</kbd> facing a wall to spray-paint your own piece (draw with the mouse, stencils, tags, colours), or on open ground for sidewalk chalk. Your pieces stay in the city next time you play. Run into cones, bins, boxes and balls to kick them; press <kbd>E</kbd> to rummage in bins and dumpsters, read a newspaper box or stand up a dumped scooter. Watch for buskers, film shoots, food trucks, markets, parades and more popping up around you.</p>
       <p><b>Moves &amp; tricks:</b> hold <kbd>Shift</kbd> to run (keep running to sprint) · hold <kbd>Space</kbd> then let go for a super jump · <kbd>Space</kbd> in the air = flip (or a parachute when you're high up) · hold <kbd>Shift</kbd> when you land hard to roll · walk into a wall and hold <kbd>W</kbd> + <kbd>Space</kbd> to climb onto roofs · <kbd>X</kbd> dance · <kbd>B</kbd> skateboard (off the snow) · jump onto benches, rocks, statues, parked cars and even car or bus roofs. On bikes, scooters, skateboards, motorbikes, snowmobiles, skis and snowboards: hold <kbd>Space</kbd> to load up, let go to jump (longer hold = more air; holding Space off a ramp gives extra pop); in the air <kbd>A</kbd>/<kbd>D</kbd> spin and <kbd>W</kbd>/<kbd>S</kbd> flip. Let go of the keys and you straighten up for the landing; you only crash if you land badly sideways or upside down. Land tricks for cash (combos multiply!). Hit the 🛹 ramps in parks with any vehicle for stunt jumps.</p>
       <p><b>Downtown Eastside:</b> people living on the street here are people: talk to them (<kbd>E</kbd>), help with spare change or a coffee, and you might make a friend. If someone collapses (🆘 on the map) it may be an overdose: get a free naloxone kit from the 💙 outreach van on Hastings or any pharmacy, and press <kbd>E</kbd> by them to give it. Watch your step for needles and glass (a sharps box from the van lets you pick them up safely).</p>
+      <p>🐻 <b>Wildlife &amp; plants:</b> BC's real animals live in the right places and seasons: black bears (and the odd grizzly up the Sea-to-Sky) forage, flip logs, eat berries, stand up to sniff you and sometimes bluff-charge. Don't run! Stand still, talk calmly and back away, or press <kbd>E</kbd> to shout "HEY BEAR!" (a car horn <kbd>G</kbd> works too). Look for deer, elk, moose, mountain goats, marmots that whistle, cougars at dusk, wolves, skunks (keep your distance), beavers at Lost Lagoon, ducks, owls at night, hummingbirds, sea lions, and crabs and sea stars in tide pools. In the fall the salmon run up the rivers and the bears come fishing. Plants change with the seasons: wildflowers, alpine meadows, berries (<kbd>E</kbd> to eat ripe ones), mushrooms in the fall, and some very rare finds. Walk close to add them to your phone's 📖 <b>Nature</b> field guide; <kbd>P</kbd> photographs one (a magazine buys the first photo of each species). <kbd>E</kbd> next to an animal to watch it. Please don't feed the wildlife: it's a fine.</p>
       <p><b>Sea life:</b> watch the water for orcas, humpback whales (look for the spout!), seals and bald eagles. Drive a fast boat near dolphins and see what happens. Messages in bottles float by sometimes: press <kbd>E</kbd> to fish one out.</p>
       <p><b>Vancouver Island &amp; beyond:</b> you can see Mt Baker, the Olympic Mountains and Vancouver Island from the city. Fly, boat or take the BC Fairies ferry / seaplane (phone → <b>Travel</b>) to Victoria, Nanaimo or Tofino. The phone map has a <b>BC Coast &amp; Island</b> view.</p>
       <p><b>Far away?</b> The Sea-to-Sky Highway runs from Horseshoe Bay to Squamish and Whistler (about 120 km, the real distance!). Fly a seaplane, or use the phone's <b>Travel</b> tab.</p>
@@ -279,7 +286,7 @@ const __prof = window.__prof = {}; let __pt0 = 0; function __mark(n) { if (!wind
 let last = performance.now(), fps = 60, previewAng = 0, mapView = 'me', autosaveT = 20, fpsT = 0;
 function autosave(manual = false) {
   if (!player.char || player.dead) return;
-  const ok = writeSave({ char: player.char.id, money: player.money, karma: player.karma, done: [...state.done], found: [...state.found], rode: [...player.stats.rode], x: player.x, z: player.z, season: G.season, seasonAuto: SEASON_STATE.auto, hour: G.hour, shop: shopSave(), mg: mgSave() });
+  const ok = writeSave({ char: player.char.id, money: player.money, karma: player.karma, done: [...state.done], found: [...state.found], rode: [...player.stats.rode], x: player.x, z: player.z, season: G.season, seasonAuto: SEASON_STATE.auto, hour: G.hour, shop: shopSave(), mg: mgSave(), jr: journalSave() });
   if (manual) ui.toast(ok ? '💾 Game saved' : '⚠️ Could not save', ok ? '' : 'Your browser blocked saving (private window?)', 1800);
 }
 addEventListener('beforeunload', () => autosave());
@@ -326,13 +333,13 @@ function loop(now, manual) {
   __mark('updateNightLights(play');
     updateStorefronts(player);
   __mark('updateStorefronts(play');
-    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player); updateTreeSeason(dt, player); updateBeaches(dt, player);
+    updateDetails(player); updateQEPark(dt, player); updateSkyline(dt, player); updateTreeSeason(dt, player); updateBeaches(dt, player); updateDistricts(dt, player);
   __mark('updateDetails(player);');
     updateSnowFun(dt, player); updateSlopes(dt, player); updatePistes(dt, player); updateTrails(dt, player); updateWaterfront(dt, player); updateSkiers(dt, player); updateStreetLife(player.x, player.z); updateBeachLife(dt, player); updateActivities(dt, player); updateMinigames(dt, player); updateHouseDetail(player.x, player.z);
   __mark('updateSnowFun(dt, play');
     updateSeaLife(dt, player); updateIsland(dt, player); updateScenery(dt, player); updateShips(dt, player); updateBoats(dt, player); updateAirTraffic(dt, player); updateRichmond(dt, player); updateDtes(dt, player); updateBreakables(dt, player); updateCumulus(dt);
   __mark('updateSeaLife(dt, play');
-    updateCityLife(dt, player); updateCityEvents(dt, player); updateAdverts(dt, player);   // city life: clutter, events, ads
+    updateCityLife(dt, player); updatePaint(dt, player); updateCityEvents(dt, player); updateAdverts(dt, player);   // city life: clutter, events, ads
   __mark('cityLife');
   __mark('updateSeaLife(dt, play');
     updateStreetProps(player);

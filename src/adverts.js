@@ -3,7 +3,6 @@
 //  - LED screens on downtown towers that flip to a new ad every few seconds (bright at night)
 //  - backlit ad panels next to bus stops and on downtown sidewalks (two-sided)
 //  - paper posters stapled to lamp posts (lost cats, band nights, roommates wanted…)
-//  - in summer, a little floatplane tows a banner around English Bay
 // The ads are painted once into texture atlases; every kind of face is ONE merged mesh (a handful of draw calls).
 import * as THREE from 'three';
 import { G, scene, std, hash2, canvasTex, toXZ, pick } from './core.js';
@@ -11,7 +10,6 @@ import { isWater, groundY } from './terrain.js';
 import { roadGrid, NX, NZ, walkY, buildingAt, nearBuildings, nearestRoad, bldGrid } from './city.js';
 import { transitStops } from './transit.js';
 import { _colliderGrids, setColliders } from './colliders.js';
-import { planeModel } from './vehicles.js';
 
 const M = window.MAP;
 // [brand, tagline, small print, background, text colour, accent, icon]
@@ -174,8 +172,8 @@ function rebuild(px, pz) {
       }
       if (best) {
         const w = Math.min(best.L - 2, 10), h = w * 0.5, y = b.base + Math.min(hgt - h / 2 - 1, 7 + h / 2), yaw = Math.atan2(best.nx, best.nz);
-        fbox(best.mx + best.nx * 0.1, y, best.mz + best.nz * 0.1, w + 0.5, h + 0.5, 0.25, yaw, '#15171a');
-        const k = Math.floor(hb * 997), i0 = screens.add(best.mx + best.nx * 0.25, y, best.mz + best.nz * 0.25, best.nx, best.nz, w, h, land(k));
+        fbox(best.mx + best.nx * 0.25, y, best.mz + best.nz * 0.25, w + 0.5, h + 0.5, 0.25, yaw, '#15171a');
+        const k = Math.floor(hb * 997), i0 = screens.add(best.mx + best.nx * 0.4, y, best.mz + best.nz * 0.4, best.nx, best.nz, w, h, land(k));
         screenList.push({ i0, k, t: hash2(k, 3) * 8 });
       }
     }
@@ -209,29 +207,9 @@ function rebuild(px, pz) {
   setColliders('adverts', coll);
 }
 
-// ---------- the banner plane over English Bay (summer days) ----------
-const BANNERS = ['RENT IS DUE · LOVE, YOUR LANDLORD', 'MARRY ME, KEVIN? (SHE SAID MAYBE)', 'EAT AT JAPA-DOGG', 'WEAR SUNSCREEN (YES, HERE)', 'GO CANOOKS GO', 'WHO LEFT THE SUN ON?'];
-let plane = null, banner = null, bannerTex = null, planeT = Math.random() * 100, bannerI = 0;
-function initPlane() {
-  plane = planeModel().g; plane.scale.setScalar(0.8); scene.add(plane); plane.visible = false;
-  bannerTex = canvasTex(1024, 128, () => {}, false); drawBanner();
-  banner = new THREE.Mesh(new THREE.PlaneGeometry(36, 4.5), new THREE.MeshStandardMaterial({ map: bannerTex, side: THREE.DoubleSide, roughness: 0.9 })); banner.visible = false; scene.add(banner);
-}
-function drawBanner() { const c = bannerTex.image.getContext('2d'); c.fillStyle = '#fffdf2'; c.fillRect(0, 0, 1024, 128); c.fillStyle = '#c62828'; c.textAlign = 'center'; c.textBaseline = 'middle'; fit(c, BANNERS[bannerI % BANNERS.length], 990, 84, '900', 'Impact, "Arial Black", sans-serif'); c.fillText(BANNERS[bannerI % BANNERS.length], 512, 66); bannerTex.needsUpdate = true; }
-const BAY = (() => { const [x, z] = toXZ(49.2845, -123.158); return { x, z }; })();
-function updatePlane(dt, pl) {
-  const on = G.season === 'summer' && G.night < 0.2 && G.wet < 0.3 && Math.hypot(pl.x - BAY.x, pl.z - BAY.z) < 5000;
-  plane.visible = banner.visible = on; if (!on) return;
-  const prev = planeT; planeT += dt * 0.035; if (Math.floor(prev / 6.283) !== Math.floor(planeT / 6.283)) { bannerI++; drawBanner(); }
-  const a = planeT, x = BAY.x + Math.cos(a) * 1300, z = BAY.z + Math.sin(a) * 650, y = 160 + Math.sin(a * 3) * 8;
-  const tx = -Math.sin(a) * 1300, tz = Math.cos(a) * 650, yaw = Math.atan2(-tx, -tz);   // nose (-z) along the direction of travel
-  plane.position.set(x, y, z); plane.rotation.set(0, yaw, -0.22, 'YXZ');
-  const L = Math.hypot(tx, tz), bx = x - tx / L * 30, bz = z - tz / L * 30; banner.position.set(bx, y - 2, bz); banner.rotation.set(0, Math.atan2(tx, tz) + Math.PI / 2, Math.sin(G.t * 3) * 0.05);
-}
-
 // ---------- per frame ----------
 let flipT = 0;
-export function initAdverts() { initFrames(); initPlane(); }
+export function initAdverts() { initFrames(); }
 export function updateAdverts(dt, pl) {
   if (!pl.char) return;
   if (Math.hypot(pl.x - cx, pl.z - cz) > 150 || !built) { cx = pl.x; cz = pl.z; built = true; rebuild(pl.x, pl.z); }
@@ -242,7 +220,6 @@ export function updateAdverts(dt, pl) {
     for (const s of screenList) { s.t += 0.5; if (s.t > 8) { s.t = 0; s.k++; screens.setUV(s.i0, land(s.k), uv.array); ch = true; } }
     if (ch) uv.needsUpdate = true;
   }
-  boardMat.emissiveIntensity = 0.04 + G.night * 0.55; screenMat.emissiveIntensity = 0.8 + G.night * 0.9; panelMat.emissiveIntensity = 0.25 + G.night * 0.9;
-  updatePlane(dt, pl);
+  boardMat.emissiveIntensity = 0.04 + G.night * 0.55; screenMat.emissiveIntensity = 0.75 - G.night * 0.3; panelMat.emissiveIntensity = 0.25 + G.night * 0.35;
 }
 export const _adverts = { boards, screens, panels, posters, screenList, get frames() { return nf; }, rebuild: () => { built = false; } };
