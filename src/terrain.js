@@ -280,6 +280,11 @@ function paintGround() {
     if (k === 'pitch') { g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1; g.stroke(); }
   }
   treeShade(g, CITY, s);
+  // ambient occlusion on the ground (2026-11-22): a soft dark band hugging every building, so lawns and yards are shaded
+  // where they meet a wall instead of glowing right up to it (one blurred stroke of all the outlines: fast)
+  { const path = new Path2D(); let nb = 0;
+    for (const b of window.MAP.blds) { const p = b.p; if (p[0] < CITY.x0 || p[0] > CITY.x1 || p[1] < CITY.z0 || p[1] > CITY.z1) continue; for (let i = 0; i < p.length; i += 2) { const X = (p[i] - CITY.x0) * s, Z = (p[i + 1] - CITY.z0) * s; i ? path.lineTo(X, Z) : path.moveTo(X, Z); } path.closePath(); nb++; }
+    g.save(); g.filter = 'blur(1.6px)'; g.strokeStyle = 'rgba(18,20,16,0.34)'; g.lineWidth = 2.2; g.lineJoin = 'round'; g.stroke(path); g.restore(); }
   // grass texture speckle on green areas
   g.globalAlpha = 0.08;
   for (let i = 0; i < 200000; i++) { g.fillStyle = Math.random() < 0.5 ? '#000' : '#fff'; g.fillRect(Math.random() * TW, Math.random() * TH, 2, 2); }
@@ -396,8 +401,12 @@ export function initTerrain(progress) {
   const nTex = makeWaterNormals();
   waterMat = new THREE.MeshStandardMaterial({ color: 0x13495a, roughness: 0.12, metalness: 0.05, normalMap: nTex, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 0.62 });
   nTex.repeat.set(4900, 4900);
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(800000, 800000).rotateX(-Math.PI / 2), waterMat);
-  sea.position.x = -120000; sea.receiveShadow = true; scene.add(sea); seaMesh = sea;
+  // The sea used to be ONE 800 km square (2 triangles). Across a triangle that big the GPU's interpolated world position
+  // (vWw) loses precision, and the error changes every time the camera moves, so the waves and the reflection near you
+  // wobbled and jerked as you walked by the water (Dav, 2026-11-22). Now it's a disc of rings that follows the camera:
+  // tiny triangles close by (2 m), growing 18% per ring out to 450 km (the waves are in world space, so following is invisible).
+  const sea = new THREE.Mesh(seaDisc(), waterMat);
+  sea.receiveShadow = true; sea.frustumCulled = false; scene.add(sea); seaMesh = sea;
   const lakeMat = waterMat.clone(); lakeMat.color.set(0x1d5560); lakeMat.side = THREE.DoubleSide;
   buildShallows();
   waterShader(waterMat, true); waterShader(lakeMat, false);
@@ -413,6 +422,18 @@ export const WATER_T = { value: 0 };
 const REFL = { rt: null, on: { value: 0 }, mat: { value: new THREE.Matrix4() }, tex: { value: null }, wet: { value: 0 }, cam: new THREE.PerspectiveCamera(), checkT: 0, seen: false };
 const LAKE_OFF = { value: 0 };
 let seaMesh = null;
+function seaDisc() {   // concentric rings: radius 0, 2 m, then ×1.18 per ring to 450 km, 64 segments (≈ 5,800 vertices)
+  const rs = [0, 2]; while (rs[rs.length - 1] < 450000) rs.push(rs[rs.length - 1] * 1.18 + 1);
+  const S = 64, pos = [], idx = [];
+  for (const r of rs) for (let s = 0; s < S; s++) { const a = s / S * Math.PI * 2; pos.push(Math.cos(a) * r, 0, Math.sin(a) * r); }
+  for (let i = 0; i < rs.length - 1; i++) for (let s = 0; s < S; s++) { const a = i * S + s, b = i * S + (s + 1) % S, c = a + S, d = b + S; idx.push(a, b, c, b, d, c); }   // counter-clockwise seen from above = facing up
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => i % 3 === 1 ? 1 : 0), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3 * 2), 2)); g.setIndex(idx); g.computeBoundingSphere();
+  return g;
+}
+// keep the sea disc centred under the camera (snapped to 2 m steps: no visible change, the shading is all world-space)
+export function followSea(cam) { if (seaMesh) seaMesh.position.set(Math.round(cam.position.x / 2) * 2, 0, Math.round(cam.position.z / 2) * 2); }
 // shallows: how close each bit of water is to a beach (8 m grid around every mapped beach near the city), so sunny
 // beach water turns turquoise with a sandy bottom (Kits, English Bay, Spanish Banks, Third Beach…) like in the photos
 const SHAL = { tex: { value: null }, rect: { value: new THREE.Vector4(0, 0, 1, 1) }, sun: { value: 1 } };
@@ -464,13 +485,13 @@ function waterShader(mat, refl) {
           float F = 0.02 + 0.98 * pow(1.0 - clamp(dot(V, gWn), 0.0, 1.0), 5.0);
           float wd3 = distance(cameraPosition, vWw);
           vec2 ruv = vRefl.xy / vRefl.w + vec2(gWn.x * 0.12, gWn.z) * (0.022 + 0.06 * uWet) * mix(1.0, 0.07, smoothstep(60.0, 1500.0, wd3));   // calm water = a nearly clean mirror, stretched a little up and down like real ripples. (Far away a screen-space nudge spans a lot of world: it used to reach past the reflected horizon into the empty part of the reflection image = a whitish smear near the far shore.)
-          vec3 rc = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
-          float k = clamp(F * 1.25 + 0.06, 0.0, 0.9) * (1.0 - 0.45 * uWet) * (1.0 - 0.45 * gShal * uSunny);   // you see INTO shallow beach water
+          vec3 rc = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb * vec3(0.74, 0.88, 0.92);   // sea water reflects darker and teal-tinted (a perfect mirror of the pale horizon sky made the bay milky white; Dav's photos show deep teal-green water)
+          float k = clamp(F * 1.15 + 0.06, 0.0, 0.78) * (1.0 - 0.45 * uWet) * (1.0 - 0.45 * gShal * uSunny);   // you see INTO shallow beach water
           outgoingLight = mix(outgoingLight, rc, k);
         }
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => refl ? 'water4r' : 'water4';
+  mat.customProgramCacheKey = () => refl ? 'water5r' : 'water5';
 }
 const _rm = new THREE.Matrix4(), _la = new THREE.Vector3(), _pl = new THREE.Plane(), _cl = new THREE.Vector4(), _q = new THREE.Vector4(), _o = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _ray = new THREE.Vector3(), _bs = new THREE.Vector2();
 const reflScale = () => { if (REFL.disabled) return 0; const q = G.settings?.quality || 'high'; return q === 'low' ? 0 : q === 'medium' ? 0.33 : 0.5; };
@@ -484,6 +505,7 @@ function seaInView(cam) {   // does any of a 5 × 4 grid of screen rays land on 
   return false;
 }
 export function updateReflection(cam) {
+  followSea(cam);
   const sc = reflScale(); if (!seaMesh || !sc) { REFL.on.value = 0; return; }
   cam.updateMatrixWorld();
   REFL.checkT -= G.dt || 0.016; if (REFL.checkT < 0) { REFL.checkT = 0.3; REFL.seen = seaInView(cam); }

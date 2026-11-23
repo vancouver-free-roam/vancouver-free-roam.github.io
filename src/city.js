@@ -136,9 +136,9 @@ function sidewalk(ctx, w, h) {
   for (let i = 0; i < 12; i++) { ctx.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},.06)`; ctx.fillRect(Math.random() * w, Math.random() * h, 6 + Math.random() * 20, 6 + Math.random() * 20); }
 }
 const TEX = {
-  arterial: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#4a4c4f'); c.fillStyle = '#e2b93b'; c.fillRect(w / 2 - 6, 0, 4, h); c.fillRect(w / 2 + 2, 0, 4, h); c.fillStyle = '#ddd'; for (const x of [w * 0.25, w * 0.75]) c.fillRect(x - 2, 0, 4, h * 0.45); c.fillStyle = '#eee'; c.fillRect(3, 0, 3, h); c.fillRect(w - 6, 0, 3, h); }),
-  local: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#505255'); }),
-  oneway: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#4b4d50'); c.fillStyle = '#e8e8e2'; for (const x of [w / 3, w * 2 / 3]) c.fillRect(x - 2, 0, 4, h * 0.3); c.fillRect(10, 0, 3, h); c.fillRect(w - 13, 0, 3, h); }),
+  arterial: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#5b5d60'); c.fillStyle = '#e2b93b'; c.fillRect(w / 2 - 6, 0, 4, h); c.fillRect(w / 2 + 2, 0, 4, h); c.fillStyle = '#ddd'; for (const x of [w * 0.25, w * 0.75]) c.fillRect(x - 2, 0, 4, h * 0.45); c.fillStyle = '#eee'; c.fillRect(3, 0, 3, h); c.fillRect(w - 6, 0, 3, h); }),
+  local: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#636568'); }),   // worn mid-grey Vancouver asphalt (was near-black on screen)
+  oneway: canvasTex(512, 512, (c, w, h) => { asphalt(c, w, h, '#5c5e61'); c.fillStyle = '#e8e8e2'; for (const x of [w / 3, w * 2 / 3]) c.fillRect(x - 2, 0, 4, h * 0.3); c.fillRect(10, 0, 3, h); c.fillRect(w - 13, 0, 3, h); }),
   path: canvasTex(128, 128, (c, w, h) => { asphalt(c, w, h, '#a9a69d'); c.strokeStyle = 'rgba(0,0,0,.15)'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke(); }),
   gravel: canvasTex(128, 128, (c, w, h) => { c.fillStyle = '#a89c86'; c.fillRect(0, 0, w, h); for (let i = 0; i < 1600; i++) { const v = 90 + Math.random() * 110; c.fillStyle = `rgb(${v},${v * 0.95},${v * 0.85})`; c.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 2.5, 1 + Math.random() * 2.5); } }),
   board: canvasTex(128, 128, (c, w, h) => { for (let y = 0; y < h; y += 16) { const v = 105 + Math.random() * 40; c.fillStyle = `rgb(${v},${v * 0.72},${v * 0.48})`; c.fillRect(0, y, w, 14); c.fillStyle = 'rgba(30,20,10,.8)'; c.fillRect(0, y + 14, w, 2); c.fillStyle = 'rgba(40,30,20,.35)'; c.fillRect(Math.random() * w, y + 4, 30, 2); } }),
@@ -518,6 +518,9 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
         rc *= 0.88 + 0.2 * gr - 0.12 * step(0.97, fract(vWP.x / 6.0 + sd)) * nearB;
         diffuseColor.rgb = mix(diffuseColor.rgb, rc, fTop * (1.0 - fRoof)); }
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.9, 0.94), fTop * uCitySnow * 0.95);
+      // ambient occlusion (2026-11-22): walls darken where they meet the ground (contact shadow, so buildings sit on the street
+      // instead of floating) and lower floors see less sky than upper floors in a street canyon
+      diffuseColor.rgb *= (1.0 - 0.34 * (1.0 - smoothstep(0.0, 1.2, rel)) * fWall) * mix(1.0, 0.86 + 0.14 * smoothstep(2.0, 30.0, rel), fWall);
       fWin = max(fWin, shopWin);
       float fLit = (fWin * step(fR, 0.25 + 0.35 * sd) + shopWin * 0.7) * uNight;`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>

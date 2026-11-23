@@ -142,10 +142,12 @@ const CAP = { leaf: 700, fl: 700, tree: 60 };
 
 // ---------- habitat on a coarse 10 m grid ----------
 const houseNear = (x, z) => { for (const b of nearBuildings(x, z, 10)) if (b.house) return true; return false; };
+const openGround = (x, z) => areaKind(x, z, 'beach') || areaKind(x, z, 'pitch') || areaKind(x, z, 'playground');
 function habitatAt(x, z) {
   if (isWater(x, z)) return null;
   const h = heightAt(x, z); if (isSnow(x, z, h) || h > snowLine() - 250) return null;   // the drawn snow starts a little below the snow line
   if (buildingAt(x, z)) return null;
+  if (openGround(x, z)) return null;   // beaches, sports fields, playgrounds: no plants on the sand or the pitch
   const nr = nearestRoad(x, z, 12); if (nr && nr.d < nr.road.w / 2 + 0.8) return null;
   const island = onIsland(x, z), m = maskAt(x, z), forest = wildForest(x, z, h);
   const wet = vnoise(x * 0.012 + 3, z * 0.012 - 7);
@@ -160,7 +162,7 @@ function habitatAt(x, z) {
 }
 let areaIdx = null;
 function areaKind(x, z, k) {
-  if (!areaIdx) { areaIdx = new Map(); for (const a of M.areas) { if (a.line || !['park', 'grass', 'flower'].includes(a.k)) continue; let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (let i = 0; i < a.p.length; i += 2) { x0 = Math.min(x0, a.p[i]); x1 = Math.max(x1, a.p[i]); z0 = Math.min(z0, a.p[i + 1]); z1 = Math.max(z1, a.p[i + 1]); } const r = { a, x0, z0, x1, z1 }; for (let i = Math.floor(x0 / 250); i <= Math.floor(x1 / 250); i++) for (let j = Math.floor(z0 / 250); j <= Math.floor(z1 / 250); j++) { const kk = i * 100003 + j; if (!areaIdx.has(kk)) areaIdx.set(kk, []); areaIdx.get(kk).push(r); } } }
+  if (!areaIdx) { areaIdx = new Map(); for (const a of M.areas) { if (a.line || !['park', 'grass', 'flower', 'beach', 'pitch', 'playground'].includes(a.k)) continue; let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (let i = 0; i < a.p.length; i += 2) { x0 = Math.min(x0, a.p[i]); x1 = Math.max(x1, a.p[i]); z0 = Math.min(z0, a.p[i + 1]); z1 = Math.max(z1, a.p[i + 1]); } const r = { a, x0, z0, x1, z1 }; for (let i = Math.floor(x0 / 250); i <= Math.floor(x1 / 250); i++) for (let j = Math.floor(z0 / 250); j <= Math.floor(z1 / 250); j++) { const kk = i * 100003 + j; if (!areaIdx.has(kk)) areaIdx.set(kk, []); areaIdx.get(kk).push(r); } } }
   const l = areaIdx.get(Math.floor(x / 250) * 100003 + Math.floor(z / 250)); if (!l) return false;
   for (const r of l) if (r.a.k === k && x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) { const p = r.a.p; let c = false; for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) if (((p[i + 1] > z) !== (p[j + 1] > z)) && x < (p[j] - p[i]) * (z - p[i + 1]) / (p[j + 1] - p[i + 1]) + p[i]) c = !c; if (c) return true; }
   return false;
@@ -199,7 +201,8 @@ function stepBuild(ms) {
       for (const [id, p] of list) {
         acc += p.w; if (pick > acc) continue;
         if (p.only && !p.only(se)) break;
-        if ((hb.k === 'garden' || hb.k === 'bed' || hb.k === 'meadowVI') && (buildingAt(x, z) || pavedY(x, z) !== null)) break;   // never on sidewalks, paths or inside houses
+        if ((hb.k === 'garden' || hb.k === 'bed' || hb.k === 'meadowVI') && (buildingAt(x, z) || pavedY(x, z) !== null)) break;
+        if (openGround(x, z)) break;   // never on sidewalks, paths or inside houses
         const y = groundY(x, z), s = 0.7 + hash2(Math.floor(z * 9), Math.floor(x * 9)) * 0.7, yaw = r * 40;
         let lc = _c.setHSL(p.leaf[0] + (r - 0.5) * 0.04, p.leaf[1], p.leaf[2] * (0.8 + hash2(Math.floor(x * 11), 1) * 0.4));
         if (se === 'fall' && p.fall) lc = _c.set(p.fall); if (se === 'winter' && p.fallCol) lc = _c.set(p.fallCol); if (se === 'fall' && p.fallCol) lc.lerp(new THREE.Color(p.fallCol), 0.5);

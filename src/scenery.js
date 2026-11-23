@@ -109,7 +109,7 @@ function buildChunk(ci, cj) {
           const x = a.p[i] + ex * s / Le, z = a.p[i + 1] + ez * s / Le; if (x < x0 || x >= x0 + CH || z < z0 || z >= z0 + CH) continue;
           if (hash2(x * 0.3, z * 0.3) > 0.4) continue;
           const nx = -ez / Le, nz = ex / Le, o2 = inPoly(x + nx * 3, z + nz * 3, a.p) ? 3 : -3, bx = x + nx * o2, bz = z + nz * o2;
-          if (!roadNear(bx, bz, 1) && !buildingAt(bx, bz) && !isWater(bx, bz)) B.push([bx, bz, 0.7 + hash2(bx, bz) * 0.9]);
+          if (!roadNear(bx, bz, 1) && !buildingAt(bx, bz) && !isWater(bx, bz) && !(areaBy.get(k) || []).some(r => r.a.k === 'beach' && inPoly(bx, bz, r.a.p))) B.push([bx, bz, 0.7 + hash2(bx, bz) * 0.9]);   // no park-edge bushes out on the beach sand
         }
       }
     }

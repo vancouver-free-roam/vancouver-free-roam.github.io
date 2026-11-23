@@ -64,7 +64,12 @@ export function biasDecals(root) {
 export const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0xb5c7d3, 0.0000062);
 export const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.2, 420000);   // far enough to see Mt Baker, the Olympics and Vancouver Island
-renderer.domElement.style.filter = 'saturate(1.16) contrast(1.05)';   // a gentle colour grade: richer greens, blues and sunsets
+// colour grade: Dav's reference photos are VIVID (deep blue sky, rich greens, fiery sunsets), so the colour stays rich. What
+// made it look cartoony was flat lighting, not colour: the realism comes from strong sun + real shadows (warm light, cool
+// blue shade; see updateSky), a camera-like contrast curve, and a soft lens vignette darkening the corners
+renderer.domElement.style.filter = 'saturate(1.15) contrast(1.09)';
+{ const v = document.createElement('div'); v.id = 'vignette'; v.style.cssText = 'position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 75% 70% at 50% 48%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.26) 100%)';
+  renderer.domElement.after(v); }
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- sky, sun, moon ----------
@@ -191,12 +196,14 @@ export function updateSky(focus) {
   SKY_LOOK.night.value = smooth(-7, -13, elev);   // full night (sun 13° below)
   SKY_LOOK.pow.value = (1.9 - 1.1 * Math.min(1, cloud * 1.3)) * (1 - SKY_LOOK.night.value) + SKY_LOOK.night.value;   // vivid on clear days, plain grey under overcast, plain at night
   const day = 1 - G.night;
-  sun.intensity = 4.3 * smooth(-2, 10, elev) * (1 - 0.7 * grey - 0.12 * cloud);   // (with the lower exposure below: deeper sky, same bright ground)
+  // real sunlight vs skylight: a sunny day is mostly DIRECT sun (shadows ~3-4× darker than sunlit ground). The old balance
+  // (sun 4.3, sky fill up to 1.27) made shadows only half as dark: flat "cheap game" lighting. More sun, much less fill.
+  sun.intensity = 5.6 * smooth(-2, 10, elev) * (1 - 0.72 * grey - 0.14 * cloud);
   sun.color.setHSL(0.075 + 0.04 * smooth(2, 30, elev), (0.95 - 0.55 * smooth(5, 35, elev)) * (1 - cloud * 0.6), 0.55 + 0.38 * smooth(0, 25, elev));   // warm gold-orange low, soft white high
-  hemi.intensity = (0.29 + 0.98 * day) * (1 - 0.22 * grey) + flash * 4;
+  hemi.intensity = (0.29 + (0.56 + 0.4 * cloud) * day) * (1 - 0.22 * grey) + flash * 4;   // overcast days stay soft and evenly lit (sky light takes over as the sun fades)
   hemi.color.setHSL(0.6 - 0.05 * gold, 0.68 * (1 - cloud * 0.55), 0.45 + 0.35 * day);
   hemi.groundColor.setHSL(0.18 - 0.08 * gold, 0.32, 0.32 * (0.4 + 0.6 * day));
-  renderer.toneMappingExposure = (0.6 + 0.35 * G.night) * (1 - 0.2 * grey) + flash * 0.8;
+  renderer.toneMappingExposure = (0.5 + 0.1 * cloud + 0.45 * G.night) * (1 - 0.2 * grey) + flash * 0.8;   // (lower by day since the sun got stronger: no blown-out white sand/water, deeper blue sky)
   // distance fog matches the horizon: soft blue by day, peach-orange at sunrise/sunset, grey only under heavy cloud
   scene.fog.color.setHSL(0.57 - 0.5 * gold * (1 - cloud), (0.42 + 0.25 * gold) * (1 - cloud * 0.75), (0.08 + 0.66 * day) * (1 - 0.25 * grey) + flash * 0.3);
   scene.fog.density = 0.0000062 * (1 + fogW * 115 + wet * 16);   // rain: misty far away, but you can still see the ground   // clear days: Mt Baker (100 km) shows through the haze

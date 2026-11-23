@@ -414,8 +414,12 @@ export class NearRing {
       if (m) { this.scene.remove(m, m.userData.shadow); m.dispose(); }
       const cap = Math.max(256, Math.ceil(n * 1.4)); m = new THREE.InstancedMesh(SPECIES_GEO[key].near, this.mat, cap); m.userData.cap = cap;
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true; m.count = 0; this.scene.add(m); this.near.set(key, m);
-      // shadows come from a cheap stand-in (the far shape, same matrices) that only the sun's shadow camera sees (layer 1)
-      const sh = new THREE.InstancedMesh(SPECIES_GEO[key].far, this.mat, cap); sh.instanceMatrix = m.instanceMatrix; sh.layers.set(1); sh.castShadow = true; sh.frustumCulled = false; sh.count = 0; m.userData.shadow = sh; this.scene.add(sh);
+      // shadows come from a cheap stand-in (the far shape, same matrices). It used to live on layer 1 "only the shadow camera
+      // sees", but three.js tests the MAIN camera's layers in the shadow pass, so the nearest trees cast NO shadow at all
+      // (2026-11-22). Now it's on layer 0 with a material that writes neither colour nor depth: invisible on screen, while the
+      // shadow pass still draws it (its depth material copies the leaf atlas + alphaTest, so the shade is dappled).
+      if (!this.shadowMat) this.shadowMat = new THREE.MeshBasicMaterial({ map: this.mat.map, alphaTest: this.mat.alphaTest || 0.42, side: THREE.DoubleSide, colorWrite: false, depthWrite: false, depthTest: true });
+      const sh = new THREE.InstancedMesh(SPECIES_GEO[key].far, this.shadowMat, cap); sh.instanceMatrix = m.instanceMatrix; sh.castShadow = true; sh.receiveShadow = false; sh.frustumCulled = false; sh.count = 0; sh.renderOrder = -1; m.userData.shadow = sh; this.scene.add(sh);
     }
     return m;
   }
