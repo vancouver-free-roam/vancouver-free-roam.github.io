@@ -106,7 +106,7 @@ export function updateSocial(dt, pl) {
 let hangT = 0;
 function sitOn(p, b) {
   const slot = b.taken++, side = slot ? 0.42 : -0.42, tx = Math.cos(b.yaw), tz = -Math.sin(b.yaw), fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
-  p.x = b.x + tx * side + fx * 0.05; p.z = b.z + tz * side + fz * 0.05; p.y = b.y; p.yaw = b.yaw + Math.PI;
+  p.x = b.x + tx * side - fx * 0.09; p.z = b.z + tz * side - fz * 0.09; p.y = b.y; p.yaw = b.yaw + Math.PI;   // back against the backrest
   p.state = 'sit'; p.kind = 'sit'; p.timer = R(12, 40); p.bench = b;
   if (Math.random() < 0.25) say(p, pick(['Ahh, my feet.', 'Best seat in the city.', 'Just people-watching.', '*scrolls phone*', 'Five more minutes…']), 2500);
 }

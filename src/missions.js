@@ -34,16 +34,16 @@ const XZ = (lat, lon) => { const [x, z] = toXZ(lat, lon); return { x, z }; };
 export const CHARACTERS = [
   { id: 'kai', face: '🚲', name: 'Kai "Seawall" Nakamura', tag: 'Bike courier · Kitsilano',
     blurb: 'Lives for the seawall, fuelled entirely by oat-milk lattes. Owes his landlord three months of rent and a kombucha.',
-    look: { skin: '#e0ac7e', hair: '#1b1b1b', shirt: '#2f855a', pants: '#2d3748', hat: '#c53030', backpack: '#f6ad55' }, start: [49.2742, -123.1545], startYaw: 0.4, where: 'Starts at Kits Beach' },
+    look: { skin: '#e0ac7e', hair: '#1b1b1b', shirt: '#2f855a', pants: '#2d3748', hat: '#c53030', backpack: '#f6ad55', fore: '#e0ac7e', shin: '#e0ac7e', beard: '#1b1b1b', lips: '#b9806a' }, start: [49.2742, -123.1545], startYaw: 0.4, where: 'Starts at Kits Beach' },
   { id: 'brenda', face: '🏡', name: 'Brenda Kowalski', tag: 'Realtor · Yaletown',
     blurb: 'Top-selling realtor. Her face is on 400 bus benches. Believes a 380 sq ft condo is "cozy luxury".',
-    look: { skin: '#f5d6bd', hair: '#d9b36c', shirt: '#b83280', pants: '#1a202c' }, start: [49.2748, -123.1218], startYaw: 0, where: 'Starts in Yaletown' },
+    look: { skin: '#f5d6bd', hair: '#d9b36c', shirt: '#b83280', pants: '#1a202c', bob: '#d9b36c', fringe: '#d9b36c', lips: '#c0505a', eyes: '#4a6a8a' }, start: [49.2748, -123.1218], startYaw: 0, where: 'Starts in Yaletown' },
   { id: 'dex', face: '🎬', name: 'Dex Sterling', tag: 'Actor · "Hollywood North"',
     blurb: 'Once played "Guy #3 Who Gets Eaten" on a big TV show. Now he\'s the stand-in for the stand-in.',
-    look: { skin: '#c68c5e', hair: '#3b2416', shirt: '#1a202c', pants: '#2c5282', hat: '#1a202c' }, start: [49.2843, -123.1078], startYaw: 1.2, where: 'Starts on a film set in Gastown' },
+    look: { skin: '#c68c5e', hair: '#3b2416', shirt: '#1a202c', pants: '#2c5282', hat: '#1a202c', beard: '#3b2416', lips: '#9a6048' }, start: [49.2843, -123.1078], startYaw: 1.2, where: 'Starts on a film set in Gastown' },
   { id: 'mei', face: '👻', name: 'Mei Chen', tag: 'Paranormal YouTuber',
     blurb: 'Hunts ghosts for 312 subscribers. Something weird is happening at Playland\'s Fright Nights… and it\'s not a costume.',
-    look: { skin: '#f1c9a5', hair: '#2a2a40', shirt: '#805ad5', pants: '#1a202c', backpack: '#2d3748' }, start: [49.2805, -123.0985], startYaw: -1.5, where: 'Starts near Chinatown' },
+    look: { skin: '#f1c9a5', hair: '#2a2a40', shirt: '#805ad5', pants: '#1a202c', backpack: '#2d3748', long: '#2a2a40', fringe: '#2a2a40', glasses: '#111111', lips: '#c46a6a' }, start: [49.2805, -123.0985], startYaw: -1.5, where: 'Starts near Chinatown' },
 ];
 
 // ---------- mission plumbing ----------

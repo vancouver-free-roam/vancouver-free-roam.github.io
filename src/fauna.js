@@ -580,7 +580,8 @@ function spawnTidePool(pl) {
   }
 }
 // real salmon rivers (the bears and the fish turn up in the fall)
-const CREEKS = [[49.3567, -123.1136, 'Capilano River'], [49.3255, -123.0255, 'Lynn Creek'], [49.3395, -122.9800, 'Seymour River'], [49.7060, -123.1180, 'Mamquam River'], [49.7930, -123.1580, 'Cheakamus River (Brackendale)'], [49.2610, -123.0230, 'Still Creek']].map(([la, lo, n]) => { const [x, z] = toXZ(la, lo); return { x, z, n, w: null }; });
+// (small rivers aren't in the map's water data, so these are the river mouths / reaches that are: checked in the preview)
+const CREEKS = [[49.3228, -123.1390, 'Capilano River'], [49.3255, -123.0255, 'Lynn Creek'], [49.3040, -123.0285, 'Seymour River'], [49.8000, -123.1550, 'Cheakamus River (Brackendale)']].map(([la, lo, n]) => { const [x, z] = toXZ(la, lo); return { x, z, n, w: null }; });
 function creekWater(c) {
   if (c.w !== null) return c.w;
   c.w = false; for (let r = 0; r <= 300 && !c.w; r += 15) for (let b = 0; b < 6.28; b += 0.3) { const x = c.x + Math.cos(b) * r, z = c.z + Math.sin(b) * r; if (isWater(x, z)) { c.w = { x, z }; break; } }

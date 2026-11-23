@@ -7,17 +7,22 @@ import { roadGrid, NX, NZ, nodeY, surfaceY, walkY, buildingAt, setRoadGlow } fro
 import { setCarLights } from './vehicles.js';
 import { setColliders, fromInstances, blockedAt } from './colliders.js';
 import { ui } from './ui.js';
+import { bake } from './tint.js';
 
 const M = window.MAP;
 const CAP = 3000, RAD = 450, SPACING = 38, POOL = 8;
 export const LIGHT = { pool: 160, head: 1100 };   // light strengths (this game's lighting scale)
 let HEAD_I = LIGHT.head;
-const poleM = std('#5a6068', { metalness: 0.6, roughness: 0.4 });
-const headM = new THREE.MeshStandardMaterial({ color: '#fff8e8', emissive: '#ffd28a', emissiveIntensity: 0.1 });
+// Realism pass 3: a tapered galvanised pole on a base, a curved "davit" arm and a cobra-head luminaire (the glowing part is
+// only the glass lens underneath)
+const poleM = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, metalness: 0.55, roughness: 0.42 });
+const headM = new THREE.MeshStandardMaterial({ color: '#fff8e8', emissive: '#ffd28a', emissiveIntensity: 0.1, roughness: 0.2 });
 const mk = (geo, mat) => { const m = new THREE.InstancedMesh(geo, mat, CAP); m.count = 0; m.frustumCulled = false; m.castShadow = false; scene.add(m); return m; };
-const poles = mk(new THREE.CylinderGeometry(0.08, 0.11, 7, 6).translate(0, 3.5, 0), poleM);
-const arms = mk(new THREE.BoxGeometry(1.6, 0.08, 0.08).translate(0.8, 6.95, 0), poleM);
-const heads = mk(new THREE.BoxGeometry(0.6, 0.14, 0.3).translate(1.45, 6.85, 0), headM);
+const GV = '#8a9096';
+const poles = mk(bake([[new THREE.CylinderGeometry(0.07, 0.12, 6.6, 12).translate(0, 3.5, 0), GV], [new THREE.CylinderGeometry(0.17, 0.2, 0.45, 12).translate(0, 0.22, 0), '#7c8288'], [new THREE.CylinderGeometry(0.25, 0.25, 0.04, 12).translate(0, 0.02, 0), '#70767c'], [new THREE.CylinderGeometry(0.13, 0.13, 0.08, 12).translate(0, 0.48, 0), '#7c8288']], 0.05), poleM);
+const davit = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(0, 6.6, 0), new THREE.Vector3(0.05, 7.0, 0), new THREE.Vector3(0.35, 7.2, 0), new THREE.Vector3(1.0, 7.15, 0), new THREE.Vector3(1.3, 7.05, 0)]), 12, 0.05, 8);
+const arms = mk(bake([[davit, GV], [new THREE.SphereGeometry(0.22, 14, 8).scale(1.75, 0.42, 0.85).translate(1.5, 6.98, 0), '#9aa0a4'], [new THREE.SphereGeometry(0.2, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.7, 0.3, 0.8).translate(1.5, 7.0, 0), '#b0b4b6']], 0.04), poleM);
+const heads = mk(new THREE.SphereGeometry(0.16, 14, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2).scale(1.7, 0.35, 0.8).translate(1.52, 6.93, 0), headM);
 // pole banners: a fabric panel on two little arms, on the road side of the pole (local +x = toward the road)
 const banners = mk(new THREE.BoxGeometry(0.62, 1.3, 0.02).translate(0.42, 4.6, 0), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.85, side: THREE.DoubleSide }));
 banners.castShadow = true; banners.setColorAt(0, new THREE.Color());
@@ -43,7 +48,7 @@ function rebuild(px, pz) {
       poles.setMatrixAt(n, _m); arms.setMatrixAt(n, _m); heads.setMatrixAt(n, _m);
       // main streets: a neighbourhood banner on each pole (colours pick a theme per street), hanging toward the road
       if (r.t <= 4 && nb < CAP) { banners.setMatrixAt(nb, _m); const th = BANNER[(e.r * 7) % BANNER.length]; banners.setColorAt(nb, _bc.set(th[k % th.length])); nb++; }
-      lamps.push({ x: x - nx * 1.45, y: y + 6.7, z: z - nz * 1.45 }); n++;
+      lamps.push({ x: x - nx * 1.5, y: y + 6.85, z: z - nz * 1.5 }); n++;
     }
   }
   for (const m of [poles, arms, heads]) { m.count = n; m.instanceMatrix.needsUpdate = true; }
