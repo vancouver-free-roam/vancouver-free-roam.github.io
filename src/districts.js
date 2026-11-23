@@ -40,7 +40,7 @@ function granvilleSign() {
         if (deck - g0 < 11) continue;   // under the bridge deck
         const sc = -Math.hypot(x - I.x, z - I.z); if (sc > bs) { bs = sc; best = { x, z, y: g0, ux: (bx - ax) / L, uz: (bz - az) / L, w: r.w }; } } } }
   if (!best) return;
-  const { x, z, y, ux, uz, w } = best, half = w / 2 + 1.6, steel = std('#3b4046', { metalness: 0.6, roughness: 0.45 });
+  const { x, z, y, ux, uz, w } = best, half = Math.max(7.2, w / 2 + 1.6), steel = std('#3b4046', { metalness: 0.6, roughness: 0.45 });
   const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = Math.atan2(ux, uz); scene.add(g);   // local x runs across the road
   for (const s of [-1, 1]) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.45, 8.6, 0.45), steel); post.position.set(s * half, 4.3, 0); post.castShadow = true; g.add(post); }
   for (const yy of [5.6, 8.3]) { const beam = new THREE.Mesh(new THREE.BoxGeometry(half * 2 + 0.5, 0.3, 0.3), steel); beam.position.set(0, yy, 0); g.add(beam); }
