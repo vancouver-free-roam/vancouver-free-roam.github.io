@@ -75,7 +75,7 @@ const FEEL = {
 };
 export const _feel = FEEL;
 function driveBoat(v, dt, input) {
-  const F = FEEL[v.type] || FEEL.speedboat;
+  const F = v.feel || (v.feel = v.model?.feel ? { ...(FEEL[v.type] || FEEL.speedboat), ...v.model.feel } : FEEL[v.type] || FEEL.speedboat);   // per-model boats (vehiclemodels.js feel)
   const b = v.boat || (v.boat = { yr: 0, ph: 0, h: 0, vy: 0, kr: 0, heel: 0, em: 0, fm: 0, dist: 0, cap: 0 });
   let sp = v.speed || 0;
   if (F.sail) {

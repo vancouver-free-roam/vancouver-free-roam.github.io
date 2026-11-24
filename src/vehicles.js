@@ -7,8 +7,10 @@ import { edges, nodeEdges, NX, NZ, nodeY, roadGrid, surfaceY, walkY, collideBuil
 import { scarePeds, peds, say, makeHuman, SKIN, HAIR, PANTS } from './people.js';
 import { isSignalNode, signalState } from './streetprops.js';
 import { collideStatic } from './colliders.js';
-import { sfx, engine } from './sound.js';
+import { sfx, engine, beep } from './sound.js';
 import { takeoff, airControl, land } from './moves.js';
+import { MODELS, DEFAULT_MODEL, calibrate, longAccel } from './vehiclemodels.js';
+export { MODELS };
 
 const M = window.MAP;
 export const vehicles = [];
@@ -42,6 +44,53 @@ export const VT = {
 // real-world car colours: mostly white, black, silver and grey, with a few blues and reds
 const CAR_COLS = ['#f2f2f0', '#f2f2f0', '#e9eaec', '#16181b', '#16181b', '#1f2226', '#b9bcc0', '#a7abb0', '#c6c9cc', '#6b7076', '#5a5f66', '#3d4248', '#1f3a5f', '#2b4c7e', '#8f1d21', '#a32a26', '#3b4a3f', '#6b5b45', '#e7e1d2'];
 
+// front of the car is -z. L length, W width, belt (beltline height), nose / tail (face heights), hood (windshield start from the
+// front), ws / roofL / rw (windshield, roof, rear window lengths), roofH, cw (cabin width share), wr (wheel radius), wb (axle inset)
+const SPECS = {
+  car:    { L: 4.55, W: 1.8, belt: 0.98, nose: 0.78, tail: 0.92, hood: 1.15, ws: 0.75, roofL: 1.45, rw: 0.62, roofH: 1.45, cw: 0.86, wr: 0.33, wb: 0.9 },
+  taxi:   { L: 4.75, W: 1.82, belt: 1.0, nose: 0.8, tail: 0.94, hood: 1.15, ws: 0.75, roofL: 1.55, rw: 0.62, roofH: 1.5, cw: 0.86, wr: 0.34, wb: 0.92 },
+  sports: { L: 4.45, W: 1.92, belt: 0.86, nose: 0.6, tail: 0.84, hood: 1.45, ws: 0.95, roofL: 0.85, rw: 0.95, roofH: 1.22, cw: 0.82, wr: 0.34, wb: 0.85 },
+  suv:    { L: 4.8, W: 1.95, belt: 1.18, nose: 1.0, tail: 1.1, hood: 1.0, ws: 0.65, roofL: 2.35, rw: 0.25, roofH: 1.78, cw: 0.9, wr: 0.4, wb: 0.92 },
+  pickup: { L: 5.5, W: 1.98, belt: 1.18, nose: 1.05, tail: 1.12, hood: 1.25, ws: 0.6, roofL: 1.35, rw: 0.12, roofH: 1.88, cw: 0.9, wr: 0.42, wb: 1.0, bed: true },
+  van:    { L: 5.6, W: 2.1, belt: 1.25, nose: 1.1, tail: 2.45, hood: 0.7, ws: 0.6, roofL: 4.2, rw: 0.02, roofH: 2.5, cw: 0.98, wr: 0.4, wb: 1.0, box: true },
+  bus:    { L: 12, W: 2.55, belt: 1.35, nose: 2.9, tail: 2.9, hood: 0.05, ws: 0.15, roofL: 11.7, rw: 0.05, roofH: 3.0, cw: 0.99, wr: 0.5, wb: 2.0, box: true },
+};
+// ---------- real-world models (vehiclemodels.js) ----------
+// each model's `d` inherits its base type's VT entry (prototype), so code that reads v.d.kind / v.d.seat … keeps working,
+// and boats.js changes to VT still flow through. Engine vehicles get calibrated physics (Pk, kA, topS, share).
+const STYLE_SIT = { sport: 0.64, cruiser: 0.44, adv: 0.77, moped: 0.5, mini: 0.49, road: 0.6, mtb: 0.57, cargo: 0.6, ebike: 0.6, share: 0.58 };   // rider height on each seat
+for (const m of Object.values(MODELS)) {
+  calibrate(m);
+  const b = VT[m.base], d = Object.create(b);
+  d.name = m.name; d.mdl = m; if (m.kg) d.kg = m.kg;
+  if (m.Pk) { d.max = m.topS; d.acc = 27.8 / ((m.z100 || 10) / 1.2); }
+  else { if (m.max) d.max = m.max; if (m.acc) d.acc = m.acc; }
+  if (m.turn) d.turn = m.turn; if (m.hop) d.hop = m.hop; if (m.vr) d.vr = m.vr; if (m.style && STYLE_SIT[m.style]) d.sitY = STYLE_SIT[m.style];
+  if (m.snow && b.snowGrip) d.snowGrip = b.snowGrip * m.snow; else if (m.snow) d.snowGrip = 0.35 * m.snow;
+  const S0 = SPECS[m.base];
+  if (S0 && m.body) { if (m.body.L) d.len = b.len * m.body.L / S0.L; if (m.body.W) d.r = b.r * m.body.W / S0.W; }
+  m.d = d;
+}
+// the model a vehicle type gets when nobody names one
+export const modelOf = (type) => MODELS[DEFAULT_MODEL[type]] || null;
+// pick a random model for traffic / parking: weights from the catalogue × where and when you are (summer convertibles,
+// mountain Subarus and pickups, West Van Range Rovers, Coal Harbour supercars at night…)
+export function spawnContext(x, z) {
+  const [lat, lon] = [49.283 - z / 111320, -123.12 + x / (111320 * Math.cos(49.283 * Math.PI / 180))];
+  return { summer: G.season === 'summer', winter: G.season === 'winter', night: (G.night || 0) > 0.5, day: (G.night || 0) < 0.3,
+    mountain: lat > 49.5 || isSnow(x, z, heightAt(x, z)), north: lat > 49.305 && lat < 49.5, rich: (lat > 49.28 && lat < 49.295 && lon > -123.135 && lon < -123.11) || (lat > 49.325 && lat < 49.37 && lon < -123.13) };
+}
+export function pickModel(bases, x, z, parked = false) {
+  const c = spawnContext(x, z), list = []; let sum = 0;
+  for (const m of Object.values(MODELS)) {
+    if (!bases.includes(m.base)) continue;
+    const w = (parked ? m.pw : m.tw) * (m.when ? m.when(c) : 1); if (!(w > 0)) continue;
+    list.push([m, w]); sum += w;
+  }
+  let r = Math.random() * sum; for (const [m, w] of list) if ((r -= w) <= 0) return m;
+  return list.length ? list[0][0] : null;
+}
+
 // ---------- models ----------
 const glassM = std('#1b2630', { metalness: 0.9, roughness: 0.08 });
 const tireM = std('#151515', { roughness: 0.9 });
@@ -55,7 +104,7 @@ const wheelGeo = r => new THREE.CylinderGeometry(r, r, 0.26, 16).rotateZ(Math.PI
 // cut out, a narrower glass cabin on top, plus grille, plates, mirrors, skirts and five-spoke alloys. Small parts are merged
 // per car type (cached), so a car is ~20 draw calls like before. ----
 const wheelCache = new Map(), bodyCache = new Map();
-const rimM = std('#a3a9af', { metalness: 0.85, roughness: 0.3 }), trimM = std('#141518', { roughness: 0.55 }), plateM = std('#f1f1ea', { roughness: 0.5 }), archM = std('#070707', { roughness: 1 });
+const decalM = std('#f4f4f0', { roughness: 0.35 }), rimM = std('#a3a9af', { metalness: 0.85, roughness: 0.3 }), trimM = std('#141518', { roughness: 0.55 }), plateM = std('#f1f1ea', { roughness: 0.5 }), archM = std('#070707', { roughness: 1 });
 // a soft dark patch under each car (contact shadow / ambient occlusion) so cars sit ON the road instead of floating
 const blobTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 4, 32, 32, 32); gr.addColorStop(0, 'rgba(0,0,0,0.75)'); gr.addColorStop(0.6, 'rgba(0,0,0,0.45)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const blobM = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
@@ -77,27 +126,17 @@ function wheel(parent, x, y, z, r, front, list) {
   const w = addMesh(tyre, tireM, 0, 0, 0, piv); addMesh(rim, rimM, 0, 0, 0, w, false);
   list.push({ piv, w, front, r });
 }
-// front of the car is -z. L length, W width, belt (beltline height), nose / tail (face heights), hood (windshield start from the
-// front), ws / roofL / rw (windshield, roof, rear window lengths), roofH, cw (cabin width share), wr (wheel radius), wb (axle inset)
-const SPECS = {
-  car:    { L: 4.55, W: 1.8, belt: 0.98, nose: 0.78, tail: 0.92, hood: 1.15, ws: 0.75, roofL: 1.45, rw: 0.62, roofH: 1.45, cw: 0.86, wr: 0.33, wb: 0.9 },
-  taxi:   { L: 4.75, W: 1.82, belt: 1.0, nose: 0.8, tail: 0.94, hood: 1.15, ws: 0.75, roofL: 1.55, rw: 0.62, roofH: 1.5, cw: 0.86, wr: 0.34, wb: 0.92 },
-  sports: { L: 4.45, W: 1.92, belt: 0.86, nose: 0.6, tail: 0.84, hood: 1.45, ws: 0.95, roofL: 0.85, rw: 0.95, roofH: 1.22, cw: 0.82, wr: 0.34, wb: 0.85 },
-  suv:    { L: 4.8, W: 1.95, belt: 1.18, nose: 1.0, tail: 1.1, hood: 1.0, ws: 0.65, roofL: 2.35, rw: 0.25, roofH: 1.78, cw: 0.9, wr: 0.4, wb: 0.92 },
-  pickup: { L: 5.5, W: 1.98, belt: 1.18, nose: 1.05, tail: 1.12, hood: 1.25, ws: 0.6, roofL: 1.35, rw: 0.12, roofH: 1.88, cw: 0.9, wr: 0.42, wb: 1.0, bed: true },
-  van:    { L: 5.6, W: 2.1, belt: 1.25, nose: 1.1, tail: 2.45, hood: 0.7, ws: 0.6, roofL: 4.2, rw: 0.02, roofH: 2.5, cw: 0.98, wr: 0.4, wb: 1.0, box: true },
-  bus:    { L: 12, W: 2.55, belt: 1.35, nose: 2.9, tail: 2.9, hood: 0.05, ws: 0.15, roofL: 11.7, rw: 0.05, roofH: 3.0, cw: 0.99, wr: 0.5, wb: 2.0, box: true },
-};
 let LO = false;   // low-detail mode (parked cars): fewer curve/bevel segments
 function extrudeSide(shape, width, bev) {
   const g = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.01, width - bev * 2), bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: LO ? 1 : 3, curveSegments: LO ? 3 : 10 });
   g.rotateY(-Math.PI / 2); g.translate((width - bev * 2) / 2, 0, 0); g.computeVertexNormals(); return g;
 }
 const box = (w, h, d, x, y, z) => new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed();
-function bodyGeos(type, lo = false) {
-  const key = lo ? type + ':lo' : type; if (bodyCache.has(key)) return bodyCache.get(key);
+function bodyGeos(id, lo = false) {
+  const key = lo ? id + ':lo' : id; if (bodyCache.has(key)) return bodyCache.get(key);
   LO = lo;
-  const S = SPECS[type], { L, W, belt, nose, tail, wr, wb } = S, f = -L / 2, r = L / 2, bot = 0.3, bev = type === 'bus' ? 0.12 : 0.09;
+  const MD = MODELS[id], type = MD ? MD.base : id, xs = MD?.x || [];
+  const S = MD && MD.body ? { ...SPECS[type], ...MD.body } : SPECS[type], { L, W, belt, nose, tail, wr, wb } = S, f = -L / 2, r = L / 2, bot = 0.3, bev = type === 'bus' ? 0.12 : 0.09;
   const ax = [f + wb, r - wb], ar = wr + 0.07, ay = wr;
   // lower body: bumper, nose, hood rising to the windshield, beltline, trunk/tail, rear bumper; wheel arches cut from the bottom
   const s = new THREE.Shape();   // shape x = car z, shape y = height
@@ -134,7 +173,8 @@ function bodyGeos(type, lo = false) {
     heads.push(box(type === 'bus' ? 0.3 : 0.4, 0.1, 0.06, sd * (W / 2 - 0.32), type === 'bus' ? 0.75 : nose - 0.17, f + 0.02));
     tails.push(box(type === 'bus' ? 0.25 : 0.44, type === 'bus' ? 0.3 : 0.11, 0.05, sd * (W / 2 - 0.27), type === 'bus' ? 1.0 : tail - 0.18, r + 0.01));
   }
-  trim.push(box(type === 'sports' ? W * 0.5 : W * 0.56, Math.min(0.26, nose * 0.3), 0.04, 0, type === 'bus' ? 0.6 : nose * 0.6, f - 0.005));   // grille
+  if (xs.includes('bigGrille')) trim.push(box(W * 0.78, Math.min(0.5, nose * 0.48), 0.05, 0, nose * 0.58, f - 0.01));   // full-size truck grille
+  else if (!xs.includes('nogrille')) trim.push(box(type === 'sports' ? W * 0.5 : W * 0.56, Math.min(0.26, nose * 0.3), 0.04, 0, type === 'bus' ? 0.6 : nose * 0.6, f - 0.005));   // grille (EVs have none)
   trim.push(box(W - 0.06, 0.16, 0.08, 0, 0.38, f + 0.01), box(W - 0.06, 0.16, 0.08, 0, 0.38, r - 0.01));   // bumpers
   plates.push(box(0.52, 0.12, 0.02, 0, 0.52, f - 0.03), box(0.52, 0.12, 0.02, 0, Math.min(tail - 0.4, 0.75), r + 0.03));
   if (S.bed) { const c3 = f + S.hood + S.ws + S.roofL + S.rw; trim.push(box(W - 0.24, 0.04, r - c3 - 0.25, 0, belt + 0.005, (c3 + r) / 2 + 0.02)); }   // the open bed
@@ -153,38 +193,200 @@ export function parkedCarGeos(type) {
   const dark = mergeGeometries([Bc.cabin, Bc.trim, Bc.tails, ...wheels].filter(Boolean).map(strip));
   const out = { paint, dark, L: S.L, W: S.W }; _pc.set(type, out); return out;
 }
-function carModel(type, color) {
-  const g = new THREE.Group(), wheels = [];
-  const paint = std(color, { metalness: 0.6, roughness: 0.28, envMapIntensity: 1.2 });
-  const B = bodyGeos(type), S = B.S, { L, W } = S, f = -L / 2;
+function carModel(id, color) {
+  const g = new THREE.Group(), wheels = [], MD = MODELS[id], type = MD ? MD.base : id, xs = MD?.x || [];
+  const paint = MD?.metal ? std(color, { metalness: 0.95, roughness: 0.42, envMapIntensity: 1.3 }) : std(color, { metalness: 0.6, roughness: 0.28, envMapIntensity: 1.2 });
+  const B = bodyGeos(id), S = B.S, { L, W } = S, f = -L / 2, r = L / 2;
   addMesh(B.body, paint, 0, 0, 0, g);
   if (!carMatsBiased) {   // details sitting ON the body (plates, arches, trim, lights) win over it; glass sits a hair behind the roof skin
-    carMatsBiased = true; depthBias(blobM, 0.0006); for (const m of [trimM, plateM, archM, lightM, tailM]) depthBias(m, 0.0002); depthBias(glassM, -0.00015);
+    carMatsBiased = true; depthBias(blobM, 0.0006); for (const m of [trimM, plateM, archM, lightM, tailM, decalM]) depthBias(m, 0.0002); depthBias(glassM, -0.00015);
   }
   const sh = addMesh(blobGeo, blobM, 0, 0.04, 0, g, false); sh.scale.set(W + 0.7, 1, L + 0.9); sh.receiveShadow = false; sh.renderOrder = 1;
   if (B.cabin) { addMesh(B.cabin, glassM, 0, 0, 0, g); addMesh(B.roof, paint, 0, 0, 0, g, false); }
   if (B.mirrors) addMesh(B.mirrors, paint, 0, 0, 0, g, false);
   addMesh(B.trim, trimM, 0, 0, 0, g, false); addMesh(B.plates, plateM, 0, 0, 0, g, false); addMesh(B.arches, archM, 0, 0, 0, g, false);
   addMesh(B.heads, lightM, 0, 0, 0, g, false); addMesh(B.tails, tailM, 0, 0, 0, g, false);
+  const c1 = f + S.hood + S.ws, c2 = c1 + S.roofL, cwH = W * S.cw / 2;   // roof span (cars)
   if (type === 'bus') {   // a band of windows down both sides, the windshield, the TransLynx yellow stripe, a destination sign
     for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.03, 1.05, L - 1.8), glassM, sd * (W / 2 + 0.005), 1.95, 0.45, g, false);
     addMesh(new THREE.BoxGeometry(W - 0.25, 1.45, 0.03), glassM, 0, 1.85, f - 0.005, g, false);
     for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.03, 0.3, L - 0.4), std('#f6c400'), sd * (W / 2 + 0.006), 1.15, 0, g, false);
     addMesh(new THREE.BoxGeometry(1.3, 0.22, 0.03), std('#111', { emissive: '#ff9a00', emissiveIntensity: 0.8 }), 0, 2.72, f - 0.01, g, false);
-  } else if (type === 'van') {   // cab windows, the serving hatch with its glowing menu strip
-    addMesh(new THREE.BoxGeometry(W - 0.2, 0.75, 0.03), glassM, 0, 1.75, f + S.hood + 0.29, g, false);
-    for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.03, 0.6, 0.7), glassM, sd * (W / 2 + 0.005), 1.75, f + S.hood + 0.7, g, false);
-    addMesh(new THREE.BoxGeometry(0.04, 1.0, 2.6), std('#2a2a2a'), W / 2 + 0.01, 1.5, 0.6, g);
-    addMesh(new THREE.BoxGeometry(0.05, 0.4, 2.8), std('#f6ad55', { emissive: '#7a4a00' }), W / 2 + 0.02, 2.15, 0.6, g);
+  } else if (type === 'van') {   // cab windows (+ the serving hatch with its glowing menu strip on food trucks)
+    const T = S.tail, wy = T * 0.69, wh = Math.min(0.75, T * 0.34);
+    addMesh(new THREE.BoxGeometry(W - 0.2, wh, 0.03), glassM, 0, wy, f + S.hood + 0.29, g, false);
+    for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.03, wh * 0.8, 0.7), glassM, sd * (W / 2 + 0.005), wy, f + S.hood + 0.7, g, false);
+    if (!MD || xs.includes('foodtruck')) {
+      addMesh(new THREE.BoxGeometry(0.04, 1.0, 2.6), std('#2a2a2a'), W / 2 + 0.01, 1.5, 0.6, g);
+      addMesh(new THREE.BoxGeometry(0.05, 0.4, 2.8), std('#f6ad55', { emissive: '#7a4a00' }), W / 2 + 0.02, 2.15, 0.6, g);
+    }
+    if (xs.includes('westy')) {   // camper: white upper half, window band down the sides, pop-top roof
+      const up = std('#f4f1e6', { roughness: 0.4 });
+      addMesh(new THREE.BoxGeometry(W + 0.025, T * 0.42, L - 0.5), up, 0, T * 0.76, 0.15, g);
+      for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.03, wh * 0.75, L - 1.9), glassM, sd * (W / 2 + 0.02), wy, 0.45, g, false);
+      addMesh(new THREE.BoxGeometry(W * 0.82, 0.16, 2.5), up, 0, T + 0.07, 0.35, g);
+      addMesh(new THREE.BoxGeometry(W * 0.84, 0.04, 2.55), std('#c9a46a'), 0, T - 0.005, 0.35, g, false);
+      addMesh(new THREE.BoxGeometry(0.5, 0.08, 0.04), up, 0, 0.82, f - 0.03, g, false);
+    }
+    if (xs.includes('courier')) for (const sd of [-1, 1]) {   // postal red + blue bands
+      addMesh(new THREE.BoxGeometry(0.02, 0.22, L - 0.9), std('#d2232a'), sd * (W / 2 + 0.012), 1.05, 0.2, g, false);
+      addMesh(new THREE.BoxGeometry(0.02, 0.08, L - 0.9), std('#1f3a7a'), sd * (W / 2 + 0.012), 0.86, 0.2, g, false);
+    }
+    if (xs.includes('icecream')) {   // pastel band, a giant cone on the roof, glowing menu boards
+      for (const sd of [-1, 1]) { addMesh(new THREE.BoxGeometry(0.02, 0.35, L - 0.6), std('#f7a8c8'), sd * (W / 2 + 0.012), 1.2, 0.1, g, false); addMesh(new THREE.BoxGeometry(0.03, 0.8, 1.6), std('#5bc0eb', { emissive: '#1d5f7a', emissiveIntensity: 0.4 }), sd * (W / 2 + 0.02), 1.75, 0.8, g, false); }
+      addMesh(new THREE.ConeGeometry(0.42, 1.1, 14).rotateX(Math.PI), std('#d9a066'), 0, T + 0.6, 0.6, g);
+      addMesh(new THREE.SphereGeometry(0.5, 14, 10), std('#ffc0d9'), 0, T + 1.25, 0.6, g); addMesh(new THREE.SphereGeometry(0.12, 8, 6), std('#c53030'), 0, T + 1.78, 0.6, g);
+    }
   }
   if (type === 'taxi') addMesh(new THREE.BoxGeometry(0.7, 0.22, 0.3), std('#fff', { emissive: '#ffd84a', emissiveIntensity: 0.5 }), 0, S.roofH + 0.12, f + S.hood + S.ws + S.roofL / 2, g);
+  // ---- per-model extras ----
+  if (xs.includes('rack') && B.cabin) for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.05, 0.06, S.roofL + 0.1), trimM, sd * cwH * 0.78, S.roofH + 0.06, (c1 + c2) / 2, g, false);
+  if (xs.includes('kayak?') && Math.random() < 0.5 && B.cabin) {   // BC classic: a kayak on the roof
+    const k = addMesh(new THREE.SphereGeometry(1, 14, 8).scale(0.3, 0.16, 2.3), std(pick(['#f6c400', '#e85d04', '#2b6cb0', '#38a169', '#c53030'])), 0, S.roofH + 0.27, (c1 + c2) / 2, g); k.castShadow = true;
+  }
+  if (xs.includes('spoiler')) {   // rally wing on posts
+    for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.05, 0.16, 0.08), trimM, sd * W * 0.32, S.belt + 0.09, r - 0.3, g, false);
+    addMesh(new THREE.BoxGeometry(W * 0.78, 0.04, 0.3), paint, 0, S.belt + 0.18, r - 0.3, g, false);
+  }
+  if (xs.includes('spoilerS')) addMesh(new THREE.BoxGeometry(W * 0.7, 0.05, 0.16), trimM, 0, Math.max(S.belt, S.tail) + 0.03, r - 0.12, g, false);
+  if (xs.includes('scoop')) addMesh(new THREE.BoxGeometry(0.55, 0.09, 0.45), paint, 0, S.nose + (S.belt - S.nose) * 0.78 + 0.03, f + S.hood * 0.62, g, false);
+  if (xs.includes('spare')) { addMesh(new THREE.CylinderGeometry(0.4, 0.4, 0.26, 18).rotateX(Math.PI / 2), tireM, 0, S.tail * 0.68, r + 0.16, g); addMesh(new THREE.CylinderGeometry(0.25, 0.25, 0.28, 12).rotateX(Math.PI / 2), rimM, 0, S.tail * 0.68, r + 0.165, g, false); }
+  if (xs.includes('stripes') && B.cabin) for (const sd of [-1, 1]) {   // twin racing stripes over the roof and hood
+    addMesh(new THREE.BoxGeometry(0.17, 0.012, S.roofL - 0.2), decalM, sd * 0.16, S.roofH + 0.025, (c1 + c2) / 2, g, false);
+    const hd = addMesh(new THREE.BoxGeometry(0.17, 0.012, S.hood * 0.8), decalM, sd * 0.16, S.nose + (S.belt - S.nose) * 0.62 + 0.02, f + S.hood * 0.5, g, false); hd.rotation.x = Math.atan2(S.belt - S.nose, S.hood) * 0.9;
+  }
+  if (xs.includes('share')) {   // car-share livery: blue side stripe + roof sign
+    for (const sd of [-1, 1]) addMesh(new THREE.BoxGeometry(0.02, 0.14, L * 0.72), std('#1b6fd8'), sd * (W / 2 + 0.012), (S.belt + 0.45) / 2, 0.1, g, false);
+    addMesh(new THREE.BoxGeometry(0.42, 0.16, 0.12), std('#1b6fd8', { emissive: '#0a3a8a', emissiveIntensity: 0.6 }), 0, S.roofH + 0.15, (c1 + c2) / 2 - 0.2, g, false);
+  }
+  if (xs.includes('louvers') && B.cabin) {   // DeLorean rear window louvers
+    const lv = addMesh(new THREE.BoxGeometry(W * S.cw * 0.9, 0.04, S.rw * 0.95), trimM, 0, (S.roofH + S.belt) / 2 + 0.04, c2 + S.rw / 2, g, false); lv.rotation.x = Math.atan2(S.roofH - S.belt, S.rw);
+  }
   for (const zz of B.ax) for (const sd of [-1, 1]) wheel(g, sd * (W / 2 - 0.13), S.wr, zz, S.wr, zz < 0, wheels);
   return { g, wheels };
 }
 // a TransLynx city bus (used by transit.js for the bus routes)
 export function busModel(color = '#1f4e8c') { const { g } = carModel('bus', color); g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(g); return g; }
-function twoWheeler(type, color) {
+// ---- per-model two-wheelers (front = -z). Each style builds its own silhouette so a superbike, a cruiser, a Vespa and a
+// cargo bike read differently from across the street. Wheels are pushed as {piv, w, front, r} so they spin and steer. ----
+const darkM = std('#1b1c1f', { roughness: 0.6 }), seatM = std('#141414', { roughness: 0.8 }), alloyM = std('#9aa0a6', { metalness: 0.8, roughness: 0.35 });
+function tw(g, wheels, z, y, r, wide, front, bicycle) {
+  const piv = new THREE.Group(); piv.position.set(0, y, z); g.add(piv);
+  const w = bicycle ? addMesh(new THREE.TorusGeometry(r - wide, wide, 6, 22).rotateY(Math.PI / 2), tireM, 0, 0, 0, piv)
+    : addMesh(new THREE.CylinderGeometry(r, r, wide, 18).rotateZ(Math.PI / 2), tireM, 0, 0, 0, piv);
+  addMesh(new THREE.CylinderGeometry(bicycle ? 0.04 : r * 0.62, bicycle ? 0.04 : r * 0.62, bicycle ? 0.1 : wide + 0.02, 12).rotateZ(Math.PI / 2), bicycle ? alloyM : rimM, 0, 0, 0, w, false);
+  if (bicycle) for (let k = 0; k < 6; k++) addMesh(new THREE.BoxGeometry(0.006, (r - wide) * 2, 0.006), alloyM, 0, 0, 0, w, false).rotation.x = k * Math.PI / 6;
+  wheels.push({ piv, w, front, r });
+}
+const tube = (g, m, ax, ay, az, bx, by, bz, t = 0.035) => {   // a frame tube from A to B
+  const L = Math.hypot(bx - ax, by - ay, bz - az), me = addMesh(new THREE.CylinderGeometry(t, t, L, 6), m, (ax + bx) / 2, (ay + by) / 2, (az + bz) / 2, g, false);
+  me.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(bx - ax, by - ay, bz - az).normalize()); return me;
+};
+const STYLED = {
+  // ---- motorbikes ----
+  sport(g, W, c) {   // full fairing, fuel tank hump, up-swept tail, clip-ons, small screen
+    tw(g, W, -0.7, 0.31, 0.31, 0.13, true); tw(g, W, 0.68, 0.31, 0.31, 0.19, false);
+    const fr = addMesh(new THREE.BoxGeometry(0.36, 0.48, 0.9), c, 0, 0.66, -0.22, g); fr.rotation.x = 0.18;
+    addMesh(new THREE.SphereGeometry(0.22, 12, 8).scale(1, 0.7, 1.5), c, 0, 0.92, -0.02, g);   // tank
+    const tl = addMesh(new THREE.BoxGeometry(0.22, 0.14, 0.62), c, 0, 0.95, 0.42, g); tl.rotation.x = -0.22;   // tail
+    addMesh(new THREE.BoxGeometry(0.24, 0.07, 0.4), seatM, 0, 0.94, 0.22, g, false);
+    const sc = addMesh(new THREE.BoxGeometry(0.3, 0.2, 0.02), glassM, 0, 1.05, -0.6, g, false); sc.rotation.x = -0.9;
+    addMesh(new THREE.BoxGeometry(0.56, 0.035, 0.035), darkM, 0, 0.93, -0.48, g, false);
+    addMesh(new THREE.BoxGeometry(0.22, 0.09, 0.04), lightM, 0, 0.82, -0.73, g, false); addMesh(new THREE.BoxGeometry(0.12, 0.04, 0.03), tailM, 0, 0.98, 0.74, g, false);
+    tube(g, chromeM, 0.13, 0.42, 0.25, 0.15, 0.62, 0.62, 0.05);   // exhaust
+    tube(g, alloyM, 0, 0.31, -0.7, 0, 0.88, -0.5, 0.03);   // fork
+  },
+  cruiser(g, W, c) {   // long and low: teardrop tank, big chrome V-twin, wide pulled-back bars, fat fenders, twin pipes
+    tw(g, W, -0.86, 0.33, 0.33, 0.16, true); tw(g, W, 0.8, 0.33, 0.33, 0.22, false);
+    addMesh(new THREE.SphereGeometry(0.24, 14, 10).scale(0.95, 0.7, 1.55), c, 0, 0.86, -0.25, g);
+    for (const s of [-1, 1]) { const cyl = addMesh(new THREE.CylinderGeometry(0.09, 0.1, 0.34, 12), chromeM, 0, 0.55, -0.05 + s * 0.1, g, false); cyl.rotation.x = s * 0.5; }
+    addMesh(new THREE.BoxGeometry(0.3, 0.2, 0.3), darkM, 0, 0.42, 0.05, g);
+    addMesh(new THREE.BoxGeometry(0.34, 0.09, 0.52), seatM, 0, 0.73, 0.3, g, false);
+    addMesh(new THREE.TorusGeometry(0.36, 0.05, 6, 14, Math.PI * 0.6).rotateY(Math.PI / 2).rotateX(-Math.PI * 0.2), c, 0, 0.35, 0.8, g, false);   // rear fender
+    addMesh(new THREE.TorusGeometry(0.36, 0.05, 6, 14, Math.PI * 0.5).rotateY(Math.PI / 2).rotateX(Math.PI * 0.35), c, 0, 0.35, -0.86, g, false);
+    tube(g, chromeM, -0.3, 1.08, -0.42, 0.3, 1.08, -0.42, 0.022); for (const s of [-1, 1]) tube(g, chromeM, s * 0.3, 1.08, -0.42, s * 0.36, 1.02, -0.25, 0.022);
+    tube(g, chromeM, 0, 0.33, -0.86, 0, 1.0, -0.55, 0.035);
+    addMesh(new THREE.SphereGeometry(0.11, 12, 8), lightM, 0, 0.92, -0.72, g, false); addMesh(new THREE.BoxGeometry(0.1, 0.05, 0.04), tailM, 0, 0.62, 1.1, g, false);
+    for (const y of [0.3, 0.4]) tube(g, chromeM, 0.2, y, -0.05, 0.22, y + 0.05, 1.05, 0.045);
+  },
+  adv(g, W, c) {   // tall adventure bike: beak fender, tall screen, crash bars, aluminium panniers + top box
+    tw(g, W, -0.78, 0.36, 0.36, 0.12, true); tw(g, W, 0.72, 0.35, 0.35, 0.17, false);
+    addMesh(new THREE.BoxGeometry(0.42, 0.36, 0.7), c, 0, 0.88, -0.15, g);
+    const bk = addMesh(new THREE.BoxGeometry(0.18, 0.05, 0.42), c, 0, 0.86, -0.75, g, false); bk.rotation.x = -0.35;
+    const sc = addMesh(new THREE.BoxGeometry(0.34, 0.34, 0.02), glassM, 0, 1.32, -0.48, g, false); sc.rotation.x = -0.4;
+    addMesh(new THREE.BoxGeometry(0.3, 0.08, 0.56), seatM, 0, 1.06, 0.25, g, false);
+    for (const s of [-1, 1]) addMesh(new THREE.BoxGeometry(0.2, 0.34, 0.46), alloyM, s * 0.32, 0.78, 0.48, g);
+    addMesh(new THREE.BoxGeometry(0.38, 0.28, 0.34), alloyM, 0, 1.2, 0.72, g);
+    addMesh(new THREE.BoxGeometry(0.7, 0.04, 0.04), darkM, 0, 1.18, -0.42, g, false);
+    tube(g, alloyM, 0, 0.36, -0.78, 0, 1.08, -0.45, 0.035);
+    addMesh(new THREE.BoxGeometry(0.2, 0.12, 0.04), lightM, 0, 1.02, -0.64, g, false); addMesh(new THREE.BoxGeometry(0.12, 0.05, 0.03), tailM, 0, 1.08, 0.9, g, false);
+  },
+  moped(g, W, c) {   // Vespa-style: small wheels, leg shield, floorboard, rounded rear body, round headlight on the bars
+    tw(g, W, -0.6, 0.2, 0.2, 0.11, true); tw(g, W, 0.52, 0.2, 0.2, 0.12, false);
+    const sh = addMesh(new THREE.BoxGeometry(0.42, 0.62, 0.06), c, 0, 0.62, -0.44, g); sh.rotation.x = 0.2;
+    addMesh(new THREE.BoxGeometry(0.34, 0.06, 0.55), darkM, 0, 0.3, -0.12, g);
+    addMesh(new THREE.SphereGeometry(0.3, 14, 10).scale(1, 0.85, 1.35), c, 0, 0.52, 0.38, g);
+    addMesh(new THREE.BoxGeometry(0.28, 0.08, 0.55), seatM, 0, 0.8, 0.3, g, false);
+    tube(g, c, 0, 0.2, -0.6, 0, 1.0, -0.5, 0.045);
+    addMesh(new THREE.BoxGeometry(0.5, 0.06, 0.08), c, 0, 1.02, -0.5, g); addMesh(new THREE.SphereGeometry(0.075, 10, 8), lightM, 0, 1.04, -0.56, g, false);
+    addMesh(new THREE.TorusGeometry(0.22, 0.04, 6, 12, Math.PI * 0.8).rotateY(Math.PI / 2).rotateX(Math.PI * 0.1), c, 0, 0.22, -0.6, g, false);
+    addMesh(new THREE.BoxGeometry(0.1, 0.05, 0.03), tailM, 0, 0.66, 0.8, g, false);
+  },
+  mini(g, W, c) {   // Grom: chunky little bike, fat 12" wheels
+    tw(g, W, -0.55, 0.25, 0.25, 0.14, true); tw(g, W, 0.52, 0.25, 0.25, 0.16, false);
+    addMesh(new THREE.BoxGeometry(0.34, 0.3, 0.6), c, 0, 0.6, -0.12, g);
+    addMesh(new THREE.BoxGeometry(0.26, 0.08, 0.5), seatM, 0, 0.78, 0.25, g, false);
+    addMesh(new THREE.BoxGeometry(0.2, 0.12, 0.3), c, 0, 0.74, 0.5, g);
+    tube(g, alloyM, 0, 0.25, -0.55, 0, 0.92, -0.4, 0.03); addMesh(new THREE.BoxGeometry(0.58, 0.035, 0.035), darkM, 0, 0.95, -0.4, g, false);
+    addMesh(new THREE.BoxGeometry(0.18, 0.1, 0.04), lightM, 0, 0.82, -0.55, g, false); tube(g, chromeM, 0.15, 0.38, 0.1, 0.18, 0.62, 0.6, 0.04);
+  },
+  // ---- bicycles (thin tubes, spoked wheels) ----
+  share(g, W, c) {   // Mobee: step-through, chunky, basket at the front
+    tw(g, W, -0.55, 0.36, 0.36, 0.04, true, true); tw(g, W, 0.55, 0.36, 0.36, 0.04, false, true);
+    tube(g, c, 0, 0.42, 0.1, 0, 0.66, -0.48, 0.045); tube(g, c, 0, 0.42, 0.1, 0, 0.9, 0.2, 0.04); tube(g, c, 0, 0.36, 0.55, 0, 0.42, 0.1, 0.03);
+    tube(g, alloyM, 0, 0.36, -0.55, 0, 0.98, -0.5, 0.025);
+    addMesh(new THREE.BoxGeometry(0.55, 0.04, 0.04), darkM, 0, 0.98, -0.5, g, false); addMesh(new THREE.BoxGeometry(0.17, 0.07, 0.27), seatM, 0, 0.93, 0.2, g, false);
+    addMesh(new THREE.BoxGeometry(0.36, 0.24, 0.28), c, 0, 0.84, -0.76, g);
+    addMesh(new THREE.TorusGeometry(0.36, 0.03, 4, 14, Math.PI * 0.6).rotateY(Math.PI / 2).rotateX(-Math.PI * 0.25), c, 0, 0.36, 0.55, g, false);
+  },
+  road(g, W, c) {   // road bike: skinny tyres, diamond frame, drop bars, high saddle
+    tw(g, W, -0.5, 0.34, 0.34, 0.014, true, true); tw(g, W, 0.5, 0.34, 0.34, 0.014, false, true);
+    const bb = [0, 0.32, 0.03], st = [0, 0.86, 0.17], ht = [0, 0.82, -0.42];
+    tube(g, c, ...bb, ...st, 0.022); tube(g, c, ...bb, ...ht, 0.026); tube(g, c, ...st, ...ht, 0.02); tube(g, c, ...bb, 0, 0.34, 0.5, 0.015); tube(g, c, ...st, 0, 0.34, 0.5, 0.013);
+    tube(g, c, 0, 0.34, -0.5, ...ht, 0.018);
+    addMesh(new THREE.TorusGeometry(0.1, 0.014, 5, 10, Math.PI).rotateY(Math.PI / 2), darkM, 0.2, 0.84, -0.52, g, false); addMesh(new THREE.TorusGeometry(0.1, 0.014, 5, 10, Math.PI).rotateY(Math.PI / 2), darkM, -0.2, 0.84, -0.52, g, false);
+    addMesh(new THREE.BoxGeometry(0.42, 0.025, 0.025), darkM, 0, 0.93, -0.46, g, false); addMesh(new THREE.BoxGeometry(0.12, 0.04, 0.26), seatM, 0, 0.95, 0.2, g, false);
+  },
+  mtb(g, W, c) {   // full-suspension mountain bike: fat knobby tyres, suspension fork, wide flat bar, rear shock
+    tw(g, W, -0.56, 0.37, 0.37, 0.06, true, true); tw(g, W, 0.56, 0.37, 0.37, 0.06, false, true);
+    const bb = [0, 0.36, 0.05], ht = [0, 0.86, -0.38];
+    tube(g, c, ...bb, ...ht, 0.04); tube(g, c, ...bb, 0, 0.88, 0.12, 0.032); tube(g, c, ...bb, 0, 0.37, 0.56, 0.025); tube(g, c, 0, 0.62, 0.2, 0, 0.37, 0.56, 0.022);
+    tube(g, chromeM, 0, 0.37, -0.56, ...ht, 0.032); addMesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 8), std('#e85d04'), 0, 0.56, -0.03, g, false).rotation.x = 1.0;
+    addMesh(new THREE.BoxGeometry(0.76, 0.03, 0.03), darkM, 0, 0.96, -0.36, g, false); addMesh(new THREE.BoxGeometry(0.13, 0.05, 0.26), seatM, 0, 0.92, 0.14, g, false);
+  },
+  cargo(g, W, c) {   // long-john cargo e-bike: small front wheel far ahead, a big kid box in between, battery, rain canopy hoops
+    tw(g, W, -1.0, 0.26, 0.26, 0.04, true, true); tw(g, W, 0.62, 0.34, 0.34, 0.045, false, true);
+    tube(g, c, 0, 0.28, -1.0, 0, 0.3, 0.05, 0.045); tube(g, c, 0, 0.3, 0.05, 0, 0.92, 0.25, 0.04); tube(g, c, 0, 0.3, 0.05, 0, 0.34, 0.62, 0.03);
+    addMesh(new THREE.BoxGeometry(0.6, 0.42, 0.72), std('#2a2d31', { roughness: 0.7 }), 0, 0.55, -0.48, g);
+    addMesh(new THREE.BoxGeometry(0.56, 0.06, 0.66), c, 0, 0.78, -0.48, g, false);
+    for (const z of [-0.78, -0.2]) addMesh(new THREE.TorusGeometry(0.28, 0.012, 4, 12, Math.PI).rotateY(Math.PI / 2).rotateY(Math.PI / 2), darkM, 0, 0.78, z, g, false);
+    addMesh(new THREE.BoxGeometry(0.1, 0.12, 0.36), darkM, 0, 0.5, 0.2, g); tube(g, alloyM, 0, 0.6, -0.1, 0, 1.05, -0.05, 0.022);
+    addMesh(new THREE.BoxGeometry(0.62, 0.03, 0.03), darkM, 0, 1.05, -0.05, g, false); addMesh(new THREE.BoxGeometry(0.17, 0.06, 0.27), seatM, 0, 0.95, 0.26, g, false);
+  },
+  ebike(g, W, c) {   // commuter e-bike: fenders, rack, chunky down-tube battery, hub motor
+    tw(g, W, -0.55, 0.35, 0.35, 0.035, true, true); tw(g, W, 0.55, 0.35, 0.35, 0.035, false, true);
+    const bb = [0, 0.33, 0.05], ht = [0, 0.84, -0.4];
+    tube(g, c, ...bb, ...ht, 0.034); tube(g, c, ...bb, 0, 0.88, 0.17, 0.03); tube(g, c, ...bb, 0, 0.35, 0.55, 0.02); tube(g, c, 0, 0.75, 0.15, 0, 0.35, 0.55, 0.018);
+    const bat = addMesh(new THREE.BoxGeometry(0.09, 0.1, 0.42), darkM, 0, 0.6, -0.17, g, false); bat.rotation.x = Math.atan2(0.84 - 0.33, 0.45);
+    addMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.1, 12).rotateZ(Math.PI / 2), darkM, 0, 0.35, 0.55, g, false);
+    tube(g, alloyM, 0, 0.35, -0.55, ...ht, 0.024); addMesh(new THREE.BoxGeometry(0.56, 0.03, 0.03), darkM, 0, 0.95, -0.42, g, false);
+    addMesh(new THREE.BoxGeometry(0.16, 0.06, 0.26), seatM, 0, 0.94, 0.17, g, false); addMesh(new THREE.BoxGeometry(0.16, 0.02, 0.36), alloyM, 0, 0.78, 0.4, g, false);
+    addMesh(new THREE.BoxGeometry(0.08, 0.06, 0.04), lightM, 0, 0.88, -0.48, g, false);
+  },
+};
+function twoWheeler(type, color, style) {
   const g = new THREE.Group(), wheels = [], c = std(color, { metalness: 0.4, roughness: 0.4 });
+  if (style && STYLED[style]) { STYLED[style](g, wheels, c); return { g, wheels }; }
   if (type === 'bike') {
     for (const z of [-0.55, 0.55]) { const piv = new THREE.Group(); piv.position.set(0, 0.36, z); g.add(piv); const w = addMesh(new THREE.TorusGeometry(0.33, 0.035, 6, 20).rotateY(Math.PI / 2), tireM, 0, 0, 0, piv); wheels.push({ piv, w, front: z < 0, r: 0.36 }); }
     addMesh(new THREE.BoxGeometry(0.06, 0.06, 1.0), c, 0, 0.62, 0, g).rotation.x = 0.15;
@@ -345,17 +547,21 @@ export function planeModel() {
 // ---------- the vehicle object ----------
 let uid = 0;
 export function makeVehicle(type, x, z, yaw = 0, opts = {}) {
-  const d = VT[type];
-  const color = opts.color || (type === 'taxi' ? '#f2c230' : type === 'bus' ? '#1f4e8c' : type === 'bike' ? '#2b6cb0' : type === 'scooter' ? '#7cc242' : type === 'van' ? '#e8e2d0' : type === 'sports' ? pick(['#e53e3e', '#f6e05e', '#1a202c', '#38a169']) : pick(CAR_COLS));
-  const mdl = d.kind === 'heli' ? heliModel() : type === 'seaplane' ? planeModel() : type === 'cessna' ? cessnaModel() : (type === 'jet' || type === 'jumbo') ? jetModel(type === 'jumbo' ? 1.75 : 1, color) : type === 'tug' ? tugModel() : type === 'skate' ? skateModel(color) : type === 'snowmobile' ? sledModel(color) : ['bike', 'scooter', 'motorbike', 'jetski'].includes(type) ? twoWheeler(type, color) : ['kayak', 'sailboat', 'speedboat', 'yacht'].includes(type) ? boatModel(type, color) : carModel(type, color);
+  // type may be a base type ('car') or a real model id ('civic'); a base type gets its default model
+  let MD = MODELS[type] || (opts.model && MODELS[opts.model]) || null;
+  if (MODELS[type]) type = MD.base; else if (!MD) MD = modelOf(type);
+  const d = MD ? MD.d : VT[type];
+  const color = opts.color || (MD?.cols ? pick(MD.cols) : null) || (type === 'taxi' ? '#f2c230' : type === 'bus' ? '#1f4e8c' : type === 'bike' ? '#2b6cb0' : type === 'scooter' ? '#7cc242' : type === 'van' ? '#e8e2d0' : type === 'sports' ? pick(['#e53e3e', '#f6e05e', '#1a202c', '#38a169']) : pick(CAR_COLS));
+  const mdl = d.kind === 'heli' ? heliModel() : type === 'seaplane' ? planeModel() : type === 'cessna' ? cessnaModel() : (type === 'jet' || type === 'jumbo') ? jetModel(type === 'jumbo' ? 1.75 : 1, color) : type === 'tug' ? tugModel() : type === 'skate' ? skateModel(color) : type === 'snowmobile' ? sledModel(color) : ['bike', 'scooter', 'motorbike', 'jetski'].includes(type) ? twoWheeler(type, color, MD?.style) : ['kayak', 'sailboat', 'speedboat', 'yacht'].includes(type) ? boatModel(type, color) : carModel(MD && SPECS[type] ? MD.id : type, color);
+  if (MD?.scale) mdl.g.scale.set(...MD.scale);
   mdl.g.rotation.order = 'YXZ'; scene.add(mdl.g);
-  const v = { id: uid++, type, d, x, z, y: 0, yaw, pitch: 0, roll: 0, speed: 0, speedAbs: 0, vy: 0, vx: 0, vz: 0, steer: 0, throttle: 0, rotorSpin: 0, driver: null, ai: null, ...mdl, keep: !!opts.keep, label: opts.label };
+  const v = { id: uid++, type, d, x, z, y: 0, yaw, pitch: 0, roll: 0, speed: 0, speedAbs: 0, vy: 0, vx: 0, vz: 0, steer: 0, throttle: 0, rotorSpin: 0, driver: null, ai: null, ...mdl, keep: !!opts.keep, label: opts.label, model: MD, gr: 1, vp: 0 };
   v.y = d.kind === 'water' || d.kind === 'plane' && isWater(x, z) ? waterLevel(x, z) + 0.05 : surfaceY(x, z, opts.y ?? 1e9);
   if (opts.y !== undefined) v.y = opts.y;
   syncModel(v); vehicles.push(v); return v;
 }
 export function removeVehicle(v) { scene.remove(v.g); const i = vehicles.indexOf(v); if (i >= 0) vehicles.splice(i, 1); }
-function syncModel(v) { v.g.position.set(v.x, v.y, v.z); v.g.rotation.set(v.pitch + (v.air ? v.air.flip : 0), v.yaw, v.roll, 'YXZ'); }
+function syncModel(v) { v.g.position.set(v.x, v.y, v.z); v.g.rotation.set(v.pitch + (v.vp || 0) + (v.air ? v.air.flip : 0), v.yaw, v.roll, 'YXZ'); }
 function skateModel(color) { const g = new THREE.Group(); addMesh(new THREE.BoxGeometry(0.24, 0.03, 0.82), std(color || '#1a1a1a'), 0, 0.12, 0, g); addMesh(new THREE.BoxGeometry(0.22, 0.005, 0.8), std('#f6c343'), 0, 0.137, 0, g, false); for (const z of [-0.28, 0.28]) { addMesh(new THREE.BoxGeometry(0.2, 0.03, 0.05), std('#b0b4b8', { metalness: 0.7 }), 0, 0.09, z, g); for (const x of [-0.1, 0.1]) addMesh(new THREE.CylinderGeometry(0.035, 0.035, 0.035, 10).rotateZ(Math.PI / 2), std('#f4f4ef'), x, 0.04, z, g); } return { g, wheels: [] }; }
 
 // ---------- player driving physics ----------
@@ -368,6 +574,7 @@ export function drivePlayer(v, dt, input) {
   if (d.kind === 'plane') return flyPlane(v, dt, input);
   const snow = isSnow(v.x, v.z, v.y) && d.kind === 'road';
   const grip = snow ? (d.snowGrip || 0.3) : 1 - 0.35 * (G.wet || 0);   // rain = slippery
+  if (d.mdl?.Pk) roadEngine(v, dt, input, d.mdl, snow, grip); else {
   // smooth steering: the wheel turns in gradually and re-centres a bit faster when you let go
   v.steer += (input.steer * d.turn - v.steer) * Math.min(1, dt * (input.steer ? 3.2 : 6));
   // Shift = extra effort: pedal / push / kick harder on bikes, boards and scooters, or floor it in anything with an engine
@@ -391,6 +598,8 @@ export function drivePlayer(v, dt, input) {
   const [fx, fz] = fwd(v);
   const tvx = fx * v.speed, tvz = fz * v.speed, g2 = input.brake && Math.abs(v.speed) > 10 ? 0.12 : grip;
   v.vx += (tvx - v.vx) * Math.min(1, dt * 8 * g2); v.vz += (tvz - v.vz) * Math.min(1, dt * 8 * g2);
+  }
+  const [fx, fz] = fwd(v);
   const ox = v.x, oz = v.z;
   v.x += v.vx * dt; v.z += v.vz * dt;
   if (d.kind === 'water') {
@@ -430,7 +639,7 @@ export function drivePlayer(v, dt, input) {
     }
     const hf = walkY(v.x + fx * d.len * 0.4, v.z + fz * d.len * 0.4, v.y - 1.4), hb = walkY(v.x - fx * d.len * 0.4, v.z - fz * d.len * 0.4, v.y - 1.4);
     const tp = Math.atan2(hf - hb, d.len * 0.8); v.pitch += (tp - v.pitch) * Math.min(1, dt * (v.air ? 10 : 5));   // gentler nose bob over bumps
-    const lean = d.show && d.kind === 'road' ? -v.steer * Math.min(1, Math.abs(v.speed) / 10) * 0.45 : -v.steer * Math.min(1, Math.abs(v.speed) / 30) * 0.05;
+    const lean = d.show && d.kind === 'road' ? -v.steer * Math.min(1, Math.abs(v.speed) / 10) * 0.45 : (v.rollT ?? -v.steer * Math.min(1, Math.abs(v.speed) / 30) * 0.05);
     v.roll += (lean - v.roll) * Math.min(1, dt * 6);
     if (isWater(v.x, v.z) && v.y < waterLevel(v.x, v.z) - 0.8) input.onSink?.();
     if (v.speedAbs > 3) { const hits = scarePeds(v.x, v.z, 9, Math.abs(v.speed), d.r + 0.6); if (hits) input.onHitPed?.(hits); }
@@ -438,9 +647,78 @@ export function drivePlayer(v, dt, input) {
   v.speedAbs = Math.abs(v.speed);
   for (const w of v.wheels) { w.w.rotation.x -= v.speed * dt / w.r; if (w.front) w.piv.rotation.y = v.steer * 0.7; }
   syncModel(v);
-  engine(!d.quiet && (d.kind !== 'road' || !d.pedal && v.type !== 'scooter'), v.speedAbs, v.type === 'motorbike' ? 'motorbike' : v.type === 'jetski' ? 'jetski' : v.type === 'bus' ? 'bus' : 'car');
+  if (d.mdl?.Pk) engineSound(v, d.mdl, input); else engine(!d.quiet && (d.kind !== 'road' || !d.pedal && v.type !== 'scooter'), v.speedAbs, v.type === 'motorbike' ? 'motorbike' : v.type === 'jetski' ? 'jetski' : v.type === 'bus' ? 'bus' : 'car');
 }
 
+// ---------- real-model road physics (cars, trucks, motorbikes, buses: anything with a calibrated engine) ----------
+// Longitudinal: engine push capped by traction (vehiclemodels.js longAccel), real braking, aero + rolling drag, engine
+// braking when you lift off, gravity on hills. Lateral: bicycle-model yaw from the real wheelbase, speed-sensitive steering,
+// a cornering limit from tyre grip (push past it and the car understeers), handbrake drifts and power-oversteer on
+// strong rear-wheel-drive cars (the tail steps out if you floor it mid-corner), and a little drift assist so slides are
+// catchable (arcade best practice). Body squats/dives/rolls with the forces (visual only: v.vp and v.rollT).
+function roadEngine(v, dt, input, M, snow, wetGrip) {
+  const d = v.d, two = d.show;
+  const gripMul = snow ? (d.snowGrip || 0.35) : wetGrip;   // rain/snow reduce both launch and cornering grip
+  v.steer += (input.steer * d.turn - v.steer) * Math.min(1, dt * (input.steer ? 3.2 : 6) * (M.resp || 1));
+  const s = v.speed, as = Math.abs(s), boost = input.boost ? 1.22 : 1;
+  let a = 0, push = 0, trac = M.mu * 1.25 * 9.81 * M.share * gripMul;
+  if (input.up) {
+    if (s < -0.3) a += M.brk * 0.8 * Math.min(1, gripMul * 1.2);   // W while rolling backwards = brake first
+    else { push = Math.max(0, longAccel(M, Math.max(0, s), 1, boost, gripMul) + M.kA * s * s + M.crr); a += push; }
+  }
+  if (input.down) {
+    if (s > 0.5) a -= M.brk * Math.min(1, 0.35 + gripMul * 0.75);   // real braking (ABS): ~0.9 g on dry tarmac, much less on snow
+    else if (s > -8) a -= Math.min(4.5, trac * 0.7);   // reverse
+  }
+  if (input.brake && as > 0.3) a -= Math.sign(s) * 5.5 * Math.min(1, gripMul + 0.2);   // handbrake locks the rear
+  const lift = !input.up && !input.down ? (two ? 0.9 : 1.1) : 0;   // engine braking when you lift off the gas
+  a -= Math.sign(s) * (M.kA * s * s + M.crr + lift);
+  const nv = s + a * dt; v.speed = (Math.sign(nv) !== Math.sign(s) && s !== 0 && !input.up && !input.down) ? 0 : nv;
+  v.speed -= 9.81 * Math.sin(v.pitch) * dt;
+  v.speed = clamp(v.speed, -9, M.topS * 1.6);
+  v.longA += (a - (v.longA || 0)) * Math.min(1, dt * 6);
+  // ---- steering: kinematic yaw (v·tanδ/wheelbase), less lock at speed, capped by the tyres' cornering grip ----
+  const sp = v.speed, steerAng = v.steer / (1 + Math.abs(sp) / (two ? 20 : 15));
+  let yawRate = sp * Math.tan(steerAng) / M.wb;
+  const latMax = M.mu * 9.81 * gripMul * 1.12;
+  v.under = 0;
+  if (Math.abs(yawRate * sp) > latMax && Math.abs(sp) > 1) { const lim = latMax / Math.abs(sp); v.under = 1 - lim / Math.abs(yawRate); yawRate = Math.sign(yawRate) * lim; }
+  // ---- drifting ----
+  const rwd = M.drive === 'rwd' && !two, dr = M.drift || 1;
+  const powerOver = rwd && input.up && Math.abs(input.steer) > 0 && push >= trac * 0.97 && sp > 4 && sp < 30 && M.Pk > 80;
+  const want = (input.brake && Math.abs(sp) > 8 && !two) || powerOver ? 1 : 0;
+  v.drift = (v.drift || 0) + (want - (v.drift || 0)) * Math.min(1, dt * (want ? 4 * dr : 1.6));
+  if (v.drift > 0.05) yawRate += input.steer * 0.8 * dr * v.drift * Math.min(1, Math.abs(sp) / 12);   // drift assist: steer into / out of the slide
+  const maxYaw = (two ? 2.2 : 1.35) * Math.sqrt(M.resp || 1) * (1 + 0.5 * v.drift);
+  yawRate = clamp(yawRate, -maxYaw, maxYaw);
+  v.yaw += yawRate * dt;
+  // ---- velocity follows the heading: tyres grip hard, unless sliding ----
+  const [fx, fz] = fwd(v), k = 8 * Math.min(1.2, gripMul * (M.mu / 0.9)) * (1 - 0.88 * v.drift);
+  v.vx += (fx * v.speed - v.vx) * Math.min(1, dt * k); v.vz += (fz * v.speed - v.vz) * Math.min(1, dt * k);
+  const slip = Math.abs(-v.vx * fz + v.vz * fx) / Math.max(3, Math.abs(v.speed));
+  if (slip > 0.12) v.speed -= Math.sign(v.speed) * slip * 4 * dt;   // a slide scrubs speed
+  v.slip = slip;
+  // ---- weight transfer (visual): squat on the gas, dive on the brakes, roll outward in corners ----
+  if (!two) {
+    v.vp += (clamp(v.longA / 9.81, -1, 1) * 0.03 * (M.soft || 1) - v.vp) * Math.min(1, dt * 7);
+    v.rollT = clamp(yawRate * v.speed / 9.81, -1.2, 1.2) * 0.05 * (M.soft || 1);
+  }
+}
+// engine note: revs climb through the real number of gears and drop at each upshift; EVs whine; hybrids glide silently
+function engineSound(v, M, input) {
+  const s = Math.abs(v.speed), n = M.gears || 5;
+  if (M.ev || (M.hyb && s < 9 && !input.boost)) return engine(true, s, 'car', { rpm: Math.min(1, s / M.topS), ev: true });
+  let rpm, load = input.up ? 1 : 0.3;
+  if (n <= 1) rpm = Math.min(1, 0.3 + 0.55 * Math.sqrt(s / M.topS) + (input.up ? 0.12 : 0));   // CVT: holds the revs
+  else {
+    const top = i => M.topS * Math.pow(i / n, 0.72);
+    while (v.gr < n && s > top(v.gr) * 0.94) { v.gr++; v.shiftT = 0.12; }
+    while (v.gr > 1 && s < top(v.gr - 1) * 0.62) v.gr--;
+    rpm = 0.18 + 0.82 * Math.min(1, s / top(v.gr));
+    if (v.shiftT > 0) { v.shiftT -= G.dt || 0.016; load = 0.2; rpm *= 0.85; }
+  }
+  engine(true, s, 'car', { rpm, pitch: M.pitch || 1, vol: M.vol || 1, load });
+}
 function flyHeli(v, dt, input) {
   v.rotorSpin = Math.min(1, v.rotorSpin + dt * 0.5);
   const lift = v.rotorSpin > 0.8;
@@ -531,9 +809,11 @@ function spawnTraffic(px, pz, parked) {
     const t = Math.random() * e.len, x = NX(e.a) + (NX(e.b) - NX(e.a)) * t / e.len, z = NZ(e.a) + (NZ(e.b) - NZ(e.a)) * t / e.len;
     const dd = Math.hypot(x - px, z - pz); if (dd < 90 || dd > 320) continue;
     if (vehicles.some(o => Math.hypot(o.x - x, o.z - z) < 12)) continue;
-    const type = parked ? pick(['car', 'car', 'suv', 'car', 'pickup', 'motorbike', 'van']) : pick(['car', 'car', 'car', 'car', 'suv', 'suv', 'pickup', 'taxi', 'taxi', 'van', 'sports', 'motorbike', 'bus']);
+    // a real model, weighted by how common it is here and now (vehiclemodels.js tw / pw / when)
+    const MD = parked ? pickModel(['car', 'suv', 'pickup', 'motorbike', 'van', 'sports'], x, z, true) : pickModel(['car', 'suv', 'pickup', 'taxi', 'van', 'sports', 'motorbike', 'bus'], x, z);
+    const type = MD ? MD.id : 'car';
     const dir = r.o ? 1 : (Math.random() < 0.5 ? 1 : -1);
-    const v = makeVehicle(type, x, z, 0, { y: nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * t / e.len + 0.8 }); v.ai = { e, dir, t, parked, wait: 0, side: parked ? r.w / 2 - 1.2 : (r.o ? 0 : r.w / 4) };
+    const v = makeVehicle(type, x, z, 0, { y: nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * t / e.len + 0.8 }); v.ai = { e, dir, t, parked, wait: 0, side: parked ? r.w / 2 - 1.2 : (r.o ? 0 : r.w / 4), k: aiPace(v) };
     if (parked) v.ai.side *= Math.random() < 0.5 ? 1 : -1;
     aiPlace(v); return;
   }
@@ -546,8 +826,8 @@ function spawnCyclist(px, pz) {
     const r = M.roads[e.r]; if (r.t < 3 || r.t > 5 || r.b || e.len < 20) continue;
     const t = Math.random() * e.len, x = NX(e.a) + (NX(e.b) - NX(e.a)) * t / e.len, z = NZ(e.a) + (NZ(e.b) - NZ(e.a)) * t / e.len, dd = Math.hypot(x - px, z - pz);
     if (dd < 70 || dd > 260 || vehicles.some(o => Math.hypot(o.x - x, o.z - z) < 10)) continue;
-    const v = makeVehicle('bike', x, z, 0, { y: nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * t / e.len + 0.8, color: pick(['#c53030', '#2b6cb0', '#1a202c', '#2f855a', '#d69e2e', '#e2e8f0']) });
-    v.ai = { e, dir: r.o ? 1 : (Math.random() < 0.5 ? 1 : -1), t, parked: false, wait: 0, side: r.w / 2 - 0.9, cyc: true };
+    const v = makeVehicle(pick(['roadbike', 'roadbike', 'mtb', 'ebike', 'ebike', 'cargo', 'mobee']), x, z, 0, { y: nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * t / e.len + 0.8 });
+    v.ai = { e, dir: r.o ? 1 : (Math.random() < 0.5 ? 1 : -1), t, parked: false, wait: 0, side: r.w / 2 - 0.9, cyc: true, k: v.model?.style === 'road' ? 1.2 : v.model?.style === 'share' ? 0.8 : R(0.9, 1.05) };
     const rider = makeHuman({ skin: pick(SKIN), hair: pick(HAIR), shirt: pick(['#e53e3e', '#38b2ac', '#ecc94b', '#1a202c', '#805ad5', '#f7fafc']), pants: pick(PANTS), hat: pick(['#e2e8f0', '#1a202c', '#c53030', '#2b6cb0']) });
     v.g.add(rider.grp); rider.grp.position.set(0, 0.55, 0); rider.grp.rotation.set(0, 0, 0); v.rider = rider;
     aiPlace(v); return;
@@ -559,6 +839,12 @@ export function makeRunner(type, x, z, fast = 1.5) {
   const e = nr.e, v = makeVehicle(type, x, z, 0, { keep: true, y: nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * nr.t + 0.8 });
   v.ai = { e, dir: 1, t: nr.t * e.len, parked: false, wait: 0, side: M.roads[e.r].o ? 0 : M.roads[e.r].w / 4, flee: true, fast };
   aiPlace(v); return v;
+}
+// driver personality: every AI driver has their own pace; slow old vans and buses dawdle, sports cars push on
+function aiPace(v) {
+  const M = v.model; let k = R(0.88, 1.1);
+  if (M) { if (M.base === 'sports') k *= 1.08; if (M.top < 140) k *= 0.85; if (M.base === 'bus') k *= 0.9; }
+  return k;
 }
 function aiPlace(v) {
   const a = v.ai, A = a.dir > 0 ? a.e.a : a.e.b, B = a.dir > 0 ? a.e.b : a.e.a;
@@ -573,7 +859,7 @@ function aiDrive(v, dt, pl) {
   const a = v.ai;
   if (a.parked) { syncModel(v); return; }
   const r = M.roads[a.e.r];
-  const target = a.cyc ? 5.5 : ((r.t === 0 ? 27 : r.t === 1 ? (r.rg ? 25 : 16) : r.t === 2 ? (r.rg ? 19 : 15) : r.t <= 4 ? 12 : 8.5) * (a.fast || 1));
+  const target = (a.cyc ? 5.5 : ((r.t === 0 ? 27 : r.t === 1 ? (r.rg ? 25 : 16) : r.t === 2 ? (r.rg ? 19 : 15) : r.t <= 4 ? 12 : 8.5) * (a.fast || 1))) * (a.k || 1);
   // look ahead for obstacles
   const [fx, fz] = fwd(v); let blocked = false;
   const check = (x, z) => { const dx = x - v.x, dz = z - v.z, ahead = dx * fx + dz * fz, side = Math.abs(-dx * fz + dz * fx); return ahead > 0 && ahead < 11 && side < 2.2; };
@@ -633,7 +919,7 @@ export function updateVehicles(dt, pl) {
     // parked/fixed vehicles far away are not drawn (big planes and boats stay visible further)
     const vd = Math.abs(v.x - px) + Math.abs(v.z - pz); v.g.visible = vd < (v.d.kind === 'plane' || v.d.kind === 'water' || v.d.kind === 'heli' ? 3000 : 900) || !!v.script;
     if (!v.g.visible && !v.ai) continue;
-    if (v.ai) aiDrive(v, dt, pl);
+    if (v.ai) { aiDrive(v, dt, pl); if (v.model?.id === 'icecream') iceCreamJingle(v, pl); }
     else if ((v.d.kind === 'water' || v.d.kind === 'plane') && isWater(v.x, v.z) && v.y < waterLevel(v.x, v.z) + 1) { v.y = waterLevel(v.x, v.z) + 0.05 + Math.sin(G.t * 1.5 + v.id) * 0.05; syncModel(v); }
     else if (v.d.kind === 'heli' && v.rotorSpin > 0) { v.rotorSpin = Math.max(0, v.rotorSpin - dt * 0.2); v.rotor.rotation.y += dt * 40 * v.rotorSpin; }
   }
@@ -643,12 +929,22 @@ export function updateVehicles(dt, pl) {
     if (o === pv || o.d.kind !== 'road') continue;
     const dx = o.x - pv.x, dz = o.z - pv.z, d = Math.hypot(dx, dz), min = (pv.d.r + o.d.r) * 1.4;
     if (d < min && d > 0.01 && Math.abs(o.y - pv.y) < 2) {
-      const push = (min - d) / d; pv.x -= dx * push * 0.5; pv.z -= dz * push * 0.5;
-      if (pv.speedAbs > 5) { sfx.bump(); pv.speed *= -0.3; pl.onBump?.(o); }
+      // heavier wins: a bus barely notices a Miata, a Miata bounces off a bus; parked cars get shoved
+      const mp = pv.d.kg || 1400, mo = o.d.kg || 1400, share = mo / (mp + mo), push = (min - d) / d;
+      pv.x -= dx * push * share; pv.z -= dz * push * share;
+      if (!o.ai || o.ai.parked) { o.x += dx * push * (1 - share); o.z += dz * push * (1 - share); o.yaw += (Math.random() - 0.5) * 0.15 * (1 - share); syncModel(o); }
+      if (pv.speedAbs > 5) { sfx.bump(); pv.speed *= share > 0.5 ? -0.3 : Math.max(-0.3, 1 - share * 1.6); pl.onBump?.(o); }
     }
   }
 }
 
+// surprise: the ice cream truck plays its tune when it's near you (a little 8-note jingle every ~7 s)
+let jingleT = 0;
+function iceCreamJingle(v, pl) {
+  const dd = Math.hypot(v.x - pl.x, v.z - pl.z); if (dd > 70 || G.t < jingleT) return;
+  jingleT = G.t + 7; beep([784, 659, 784, 880, 784, 659, 523, 587], 0.16, 'triangle', 0.05 * Math.max(0.25, 1 - dd / 70), 0.19);
+  if (!pl.vehicle && dd < 25 && Math.random() < 0.3) say({ x: v.x, z: v.z, y: v.y + 1 }, pick(['🍦 Ice cream!', 'Get your Drippy Dip!', '🍦🍦🍦']));
+}
 // bike-share bikes at real bike-share stations, scooters and bikes sprinkled around
 const stationsDone = new Set();
 let microTimer = 0;
@@ -682,13 +978,13 @@ export function placeFixedVehicles() {
   const findLand = (x, z) => { for (let r = 0; r < 80; r += 3) for (let a = 0; a < 6.28; a += 0.5) { const X = x + Math.cos(a) * r, Z = z + Math.sin(a) * r; if (!isWater(X, Z) && !buildingAt(X, Z)) return [X, Z]; } return [x, z]; };
   const at = (lat, lon) => toXZ(lat, lon);
   // Harbour air seaplanes in Coal Harbour
-  let [x, z] = findWater(...at(49.2915, -123.1185)); makeVehicle('seaplane', x, z, 0.4, { keep: true, label: 'Harbour Err seaplane' });
-  [x, z] = findWater(...at(49.2925, -123.1225)); makeVehicle('seaplane', x, z, 1.2, { keep: true });
+  let [x, z] = findWater(...at(49.2915, -123.1185)); makeVehicle('beaver', x, z, 0.4, { keep: true, label: 'Harbour Err Beaver' });
+  [x, z] = findWater(...at(49.2925, -123.1225)); makeVehicle('otter', x, z, 1.2, { keep: true, label: 'Harbour Err Otter' });
   // helicopter on the waterfront heliport + one on top of a hospital-ish pad near BC Place
-  [x, z] = findLand(...at(49.2869, -123.1050)); const hp = makeVehicle('heli', x, z, 0, { keep: true }); helipad(hp);
-  [x, z] = findLand(...at(49.2745, -123.1105)); helipad(makeVehicle('heli', x, z, 1.5, { keep: true }));
+  [x, z] = findLand(...at(49.2869, -123.1050)); const hp = makeVehicle('astar', x, z, 0, { keep: true }); helipad(hp);
+  [x, z] = findLand(...at(49.2745, -123.1105)); helipad(makeVehicle('jetranger', x, z, 1.5, { keep: true }));
   // jet skis
-  for (const [lat, lon] of [[49.2928, -123.1300], [49.2725, -123.1318], [49.2862, -123.1425], [49.2752, -123.1525]]) { [x, z] = findWater(...at(lat, lon)); makeVehicle('jetski', x, z, R(0, 6), { keep: true, color: pick(['#e53e3e', '#f6e05e', '#38b2ac']) }); }
+  for (const [lat, lon] of [[49.2928, -123.1300], [49.2725, -123.1318], [49.2862, -123.1425], [49.2752, -123.1525]]) { [x, z] = findWater(...at(lat, lon)); makeVehicle(pick(['spark', 'spark', 'rxp']), x, z, R(0, 6), { keep: true }); }
   // boats: kayaks, sailboats, speedboats and yachts (swim or walk up and press F)
   // boats look further for open water (bigger boats need more room) and point at the most open water
   const roomy = (X, Z, m) => isWater(X, Z) && isWater(X + m, Z) && isWater(X - m, Z) && isWater(X, Z + m) && isWater(X, Z - m);
@@ -696,7 +992,8 @@ export function placeFixedVehicles() {
     const [x0, z0] = at(lat, lon), m = VT[type].len * 0.6 + 2; let bx = x0, bz = z0;
     find: for (let r = 0; r < 500; r += 5) for (let a = 0; a < 6.28; a += 0.25) { const X = x0 + Math.cos(a) * r, Z = z0 + Math.sin(a) * r; if (roomy(X, Z, m)) { bx = X; bz = Z; break find; } }
     let best = 0, by = 0; for (let k = 0; k < 16; k++) { const yw = k / 16 * Math.PI * 2, fx = -Math.sin(yw), fz = -Math.cos(yw); let d = 0; while (d < 80 && isWater(bx + fx * d, bz + fz * d)) d += 4; if (d > best) { best = d; by = yw; } }
-    makeVehicle(type, bx, bz, by, { keep: true, color });
+    const alt = { speedboat: ['bowrider', 'bowrider', 'rib'], kayak: ['seakayak', 'sup', null] }[type];
+    makeVehicle(alt ? (pick(alt) || type) : type, bx, bz, by, { keep: true, color });
   };
   for (let i = 0; i < 3; i++) boat('kayak', 49.3292 + i * 0.0003, -122.9462, pick(['#f6e05e', '#e53e3e', '#38a169']));   // Deep Cove
   boat('kayak', 49.2722, -123.1340, '#ed8936'); boat('kayak', 49.2755, -123.1560, '#e53e3e'); boat('kayak', 50.1105, -122.9800, '#38a169'); boat('kayak', 49.3765, -123.2760, '#f6e05e');
@@ -704,7 +1001,12 @@ export function placeFixedVehicles() {
   boat('speedboat', 49.2918, -123.1272, '#c53030'); boat('speedboat', 49.2718, -123.1290, '#2b6cb0'); boat('speedboat', 49.3745, -123.2735, '#1a202c');
   boat('yacht', 49.2912, -123.1290, '#ffffff', 2.4); boat('yacht', 49.2905, -123.1335, '#ffffff', 2.6); boat('yacht', 49.3758, -123.2770, '#ffffff', 1.2);
   // fun parked rides
-  [x, z] = findLand(...at(49.2841, -123.1080)); makeVehicle('sports', x, z, 1.6, { keep: true, color: '#e53e3e' });
+  [x, z] = findLand(...at(49.2841, -123.1080)); makeVehicle('corvette', x, z, 1.6, { keep: true, color: '#c53030' });
+  // surprises: a lime-green supercar at Coal Harbour, an offshore racer in the marina, a stainless-steel time machine in a Gastown lane, a camper van at Kits Beach
+  [x, z] = findLand(...at(49.2905, -123.1258)); makeVehicle('lambo', x, z, 0.9, { keep: true, color: '#8fd400' });
+  [x, z] = findWater(...at(49.2908, -123.1245)); makeVehicle('cigarette', x, z, 0.5, { keep: true });
+  [x, z] = findLand(...at(49.2836, -123.1062)); makeVehicle('delorian', x, z, 2.2, { keep: true });
+  [x, z] = findLand(...at(49.2745, -123.1545)); makeVehicle('westy', x, z, 0.4, { keep: true, color: '#c97a2b' });
   [x, z] = findLand(...at(49.2722, -123.1350)); makeVehicle('van', x, z, 0.3, { keep: true });
   // Sea-to-Sky + Whistler
   [x, z] = findWater(...at(50.1440, -122.9500)); makeVehicle('seaplane', x, z, 2.5, { keep: true, label: 'Harbour Err seaplane' });
@@ -712,8 +1014,8 @@ export function placeFixedVehicles() {
   [x, z] = findWater(...at(49.3755, -123.2750)); makeVehicle('jetski', x, z, 1, { keep: true, color: '#e53e3e' });
   [x, z] = findLand(...at(50.1185, -122.9470)); helipad(makeVehicle('heli', x, z, 0.5, { keep: true }));
   [x, z] = findLand(...at(49.7010, -123.1560)); helipad(makeVehicle('heli', x, z, 2, { keep: true }));
-  [x, z] = findLand(...at(49.3770, -123.2705)); makeVehicle('sports', x, z, 0, { keep: true, color: '#f6e05e' });
-  for (let i = 0; i < 4; i++) { [x, z] = findLand(...at(50.1162 + i * 0.00005, -122.9532)); makeVehicle('bike', x + i * 1.2, z, 0, { keep: true, color: '#dd6b20' }); }
+  [x, z] = findLand(...at(49.3770, -123.2705)); makeVehicle('p911', x, z, 0, { keep: true, color: '#e6b400' });
+  for (let i = 0; i < 4; i++) { [x, z] = findLand(...at(50.1162 + i * 0.00005, -122.9532)); makeVehicle(i < 2 ? 'mtb' : 'roadbike', x + i * 1.2, z, 0, { keep: true }); }
   for (let i = 0; i < 2; i++) { [x, z] = findLand(...at(49.7005, -123.1545)); makeVehicle('bike', x + i * 1.2, z, 0, { keep: true }); }
 }
 function helipad(v) {

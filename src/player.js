@@ -251,8 +251,8 @@ export function updatePlayer(dt) {
       if (nv) player.enterVehicle(nv);
       else if (player.borrowBoat?.()) { /* a boat tied up in a marina (boats.js) */ }
       else { const ps = takeParked(player.x, player.z, 4.2); if (ps) {   // a car parked at the curb: borrow it
-        const car = makeVehicle(ps.t, ps.x, ps.z, ps.yaw, { color: ps.col, y: walkY(ps.x, ps.z) + 0.2 }); player.enterVehicle(car); player.karma -= 1;
-        ui.toast('🔑 Borrowed a parked car', ['The owner left the keys in the cupholder. Classic.', 'It smells like air freshener and regret.', 'There\'s a parking ticket on the windshield already.', 'The radio is stuck on smooth jazz.'][Math.floor(Math.random() * 4)] + ' (-1 karma)', 2600); } }
+        const car = makeVehicle(ps.t, ps.x, ps.z, ps.yaw, { color: ps.col, y: walkY(ps.x, ps.z) + 0.2 }); car.fromParked = true; player.enterVehicle(car);
+        if (!car.model?.share) { player.karma -= 1; ui.toast('🔑 Borrowed a parked car', ['The owner left the keys in the cupholder. Classic.', 'It smells like air freshener and regret.', 'There\'s a parking ticket on the windshield already.', 'The radio is stuck on smooth jazz.'][Math.floor(Math.random() * 4)] + ' (-1 karma)', 2600); } } }
     }
   }
   if (player.vehicle) {

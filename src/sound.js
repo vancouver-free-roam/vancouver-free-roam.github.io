@@ -11,9 +11,16 @@ export function initAudio() {
     eng = { o1, o2, f, g };
   } catch (e) { ac = null; }
 }
-export function engine(on, speed, kind = 'car') {
+export function engine(on, speed, kind = 'car', o) {
   if (!eng) return;
   const t = ac.currentTime;
+  if (o && o.rpm !== undefined) {   // per-model engine (vehicles.js): real revs through the gears, pitch = engine size, EVs whine
+    const ev = !!o.ev, rpm = o.rpm, f = ev ? 180 + rpm * 900 : (o.pitch || 1) * (32 + rpm * 120);
+    eng.o1.frequency.setTargetAtTime(f, t, ev ? 0.1 : 0.04); eng.o2.frequency.setTargetAtTime(ev ? f * 1.5 : f * 0.5, t, 0.04);
+    eng.f.frequency.setTargetAtTime(ev ? 1400 : 350 + rpm * 900 * (o.load ?? 1), t, 0.08);
+    eng.g.gain.setTargetAtTime(on && !sound.muted ? (ev ? 0.006 + rpm * 0.01 : (o.vol || 1) * (0.025 + rpm * 0.03 * (0.5 + 0.5 * (o.load ?? 1)))) : 0, t, 0.1);
+    return;
+  }
   const base = { car: 45, motorbike: 70, heli: 22, plane: 55, jetski: 60, bus: 35 }[kind] ?? 45;
   const f = base + speed * (kind === 'heli' ? 0.4 : 3);
   eng.o1.frequency.setTargetAtTime(f, t, 0.08); eng.o2.frequency.setTargetAtTime(f * (kind === 'heli' ? 4 : 0.5), t, 0.08);

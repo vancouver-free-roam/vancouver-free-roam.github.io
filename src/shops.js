@@ -24,13 +24,29 @@ export const OUTFITS = [
   { id: 'vest', name: 'Fleece Vest Tech Bro', price: 200, shirt: '#a0aec0', pants: '#c4b59a', joke: 'You feel a sudden urge to say "synergy".' },
   { id: 'shell', name: 'Rain Shell Supreme ($600 jacket)', price: 600, shirt: '#f6e05e', pants: '#1a202c', joke: 'Waterproof, windproof and wallet-proof.' },
 ];
+// Kits Motors stock: real models (vehiclemodels.js). The first five keep their old ids so older saves still own them.
 export const RIDES = [
-  { type: 'car', name: 'Sensible hatchback', price: 600, color: '#2f855a' },
-  { type: 'motorbike', name: 'Motorbike', price: 900, color: '#1a202c' },
-  { type: 'suv', name: 'SUV (for the one snowy day a year)', price: 1200, color: '#e2e8f0' },
-  { type: 'sports', name: 'Sports car (midlife crisis edition)', price: 3500, color: '#e53e3e' },
-  { type: 'heli', name: 'Helicopter (skip the Lions Gate traffic)', price: 15000 },
+  { type: 'car', model: 'mazda3', cat: 0, name: 'Sensible hatchback (Mazdah Tree)', price: 600, color: '#2f855a' },
+  { type: 'suv', model: 'rav4', cat: 0, name: 'SUV for the one snowy day a year (Toyoda RAF-4)', price: 1200, color: '#e2e8f0' },
+  { type: 'outback', cat: 0, name: 'Subaroo Outbak (kayak sold separately)', price: 1100, color: '#3f5a46' },
+  { type: 'tacoma', cat: 0, name: 'Toyoda Tacomuh (bike rack, mud included)', price: 1800 },
+  { type: 'model3', cat: 0, name: 'Teslo Model Tree (it updates itself overnight)', price: 2800, color: '#f2f2f0' },
+  { type: 'westy', cat: 0, name: 'Westfailure camper van (breakdowns included)', price: 1500 },
+  { type: 'miata', cat: 1, name: 'Mazdah MX-5 Miyata (the answer is always Miata)', price: 2400, color: '#9b111e' },
+  { type: 'sports', model: 'mustang', cat: 1, name: 'Forde Mustank GT (midlife crisis edition)', price: 3500, color: '#e53e3e' },
+  { type: 'wrx', cat: 1, name: 'Subaroo WRX (rally blue, obviously)', price: 3200, color: '#1f4fa0' },
+  { type: 'p911', cat: 1, name: 'Porscha 912 (West Van starter car)', price: 9000 },
+  { type: 'lambo', cat: 1, name: 'Lambo-ghini Hurry-can (Coal Harbour spec)', price: 22000, color: '#8fd400' },
+  { type: 'vespa', cat: 2, name: 'Vesper scooter (espresso holder included)', price: 400 },
+  { type: 'motorbike', model: 'ninja', cat: 2, name: 'Kawasucky Ninja 400 (first motorbike)', price: 900, color: '#1a202c' },
+  { type: 'fatboy', cat: 2, name: 'Hardly-Davidsun Fat Boi (loud pipes)', price: 2200 },
+  { type: 'gs', cat: 2, name: 'BMV GeeEss adventure bike (Sea-to-Sky ready)', price: 2600 },
+  { type: 'r1', cat: 2, name: 'Yamahaha R-Won superbike (please wear a helmet)', price: 3000 },
+  { type: 'roadbike', cat: 2, name: 'Treck road bike (Lycra not included)', price: 300 },
+  { type: 'mtb', cat: 2, name: 'Rocky Mountainz MTB (North Shore approved)', price: 350 },
+  { type: 'heli', model: 'astar', cat: 3, name: 'Helicopter (skip the Lions Gate traffic)', price: 15000 },
 ];
+const CATS = ['🚗 Everyday cars & SUVs', '🏎️ Sports cars', '🏍️ Motorbikes & bicycles', '🚁 Helicopter'];
 const GEAR = [
   { id: 'ebike', name: 'Your own e-bike (no more rental fees)', price: 250, ride: 'bike' },
   { id: 'goldumb', name: 'Golden umbrella', price: 60 },
@@ -147,14 +163,17 @@ export function callRide(type) {
     else [x, z] = openSpot(player.x + 4, player.z, 3);
   }
   if (isWater(x, z)) { ui.toast('🚫 No room here', 'Try again on dry land.', 2000); return null; }
-  const v = makeVehicle(type, x, z, yaw, { keep: true, color: r.color }); v.owned = true; called[type] = v;
+  const v = makeVehicle(r.model || type, x, z, yaw, { keep: true, color: r.color }); v.owned = true; called[type] = v;
   return v;
 }
 async function openCars() {
-  const opts = RIDES.map(r => OWN.rides.includes(r.type) ? '🔑 Owned: ' + r.name + ' (bring it here)' : `${r.name} · ${money(r.price)}`);
-  const i = await ui.dialog('🚗 Kits Motors', 'Salesman: "This baby has heated seats AND a roof rack for your kayak. Everyone in Kits has a kayak. Do you have a kayak?"', [...opts, 'Just looking']);
-  const r = RIDES[i]; if (!r) return;
-  if (!OWN.rides.includes(r.type)) { if (!spend(r.price)) return; OWN.rides.push(r.type); ui.toast('🔑 You bought a ' + r.name.split(' (')[0].toLowerCase() + '!', 'It\'s yours: no karma loss, and you can call it from your phone (Wallet tab).', 4000); }
+  const c = await ui.dialog('🚗 Kits Motors', 'Salesman: "This baby has heated seats AND a roof rack for your kayak. Everyone in Kits has a kayak. Do you have a kayak?"<br><small>Every ride drives like the real thing: real power, weight, grip and top speed.</small>', [...CATS, 'Just looking']);
+  if (!(c >= 0 && c < CATS.length)) return;
+  const list = RIDES.filter(r => r.cat === c);
+  const opts = list.map(r => OWN.rides.includes(r.type) ? '🔑 Owned: ' + r.name + ' (bring it here)' : `${r.name} · ${money(r.price)}`);
+  const i = await ui.dialog(CATS[c], 'Salesman: "Test drives are free if you buy it. Otherwise also free, but I cry."', [...opts, 'Back']);
+  const r = list[i]; if (!r) return openCars();
+  if (!OWN.rides.includes(r.type)) { if (!spend(r.price)) return; OWN.rides.push(r.type); ui.toast('🔑 You bought a ' + r.name.split(' (')[0] + '!', 'It\'s yours: no karma loss, and you can call it from your phone (Wallet tab).', 4000); }
   callRide(r.type);
 }
 

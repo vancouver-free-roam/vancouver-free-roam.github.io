@@ -883,6 +883,13 @@ export const SECRETS = [
   ['banksy', 'Banksy of Vancouver', 'You left 10 pieces of your own street art around the city.'],
   ['dumpsterdive', 'Lane Treasure', 'You found a golden pinecone trophy in a back-lane dumpster.'],
   ['crowfries', 'Crow Heist', 'You watched a crow steal someone\'s fries. Crows remember faces.'],
+  // vehicles (vehiclemodels.js, garage.js)
+  ['garage10', 'Petrolhead', 'You drove 10 different vehicle models.'],
+  ['garage25', 'Car Collector', 'You drove 25 different vehicle models. Your insurance company is nervous.'],
+  ['outatime', 'Outatime', 'You hit 88 miles per hour in the DeLorian. Great Scott!'],
+  ['supercar', 'Coal Harbour Cruiser', 'You took the lime-green supercar for a spin.'],
+  ['drift', 'Sideways', 'You held a drift for three whole seconds.'],
+  ['carshare', 'Home Zone', 'You unlocked an Ev-Oh car share like a real Vancouverite.'],
   // boats (boats.js)
   ['marinathief', 'Yacht Rock', 'You "borrowed" a boat from a marina. The owner is going to be SO confused.'],
   ['oldsalt', 'Old Salt', 'You sailed a whole kilometre using nothing but the wind.'],

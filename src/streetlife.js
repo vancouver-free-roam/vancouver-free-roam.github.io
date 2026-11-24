@@ -7,13 +7,16 @@ import * as THREE from 'three';
 import { G, scene, std, hash2 } from './core.js';
 import { groundY, isWater } from './terrain.js';
 import { roadGrid, NX, NZ, nodeEdges, roadName, buildingAt } from './city.js';
-import { parkedCarGeos } from './vehicles.js';
+import { parkedCarGeos, MODELS } from './vehicles.js';
 import { setColliders, blockedAt } from './colliders.js';
 
 const M = window.MAP;
 const PRAD = 250, WRAD = 450, CAP = 700;
 const COLS = ['#f2f2f0', '#f2f2f0', '#e9eaec', '#16181b', '#16181b', '#1f2226', '#b9bcc0', '#a7abb0', '#c6c9cc', '#6b7076', '#5a5f66', '#3d4248', '#1f3a5f', '#2b4c7e', '#8f1d21', '#a32a26', '#3b4a3f', '#6b5b45', '#e7e1d2'];
-const TYPES = ['car', 'car', 'car', 'suv', 'suv', 'pickup'];
+// real models parked at the curb, as common as they are on Vancouver streets (vehiclemodels.js pw weights)
+const TYPES = Object.values(MODELS).filter(m => ['car', 'suv', 'pickup', 'sports'].includes(m.base) && m.pw > 0 && (m.body?.L || 4.6) < 6.0).map(m => m.id);
+const CUM = []; { let a = 0; for (const t of TYPES) { a += MODELS[t].pw; CUM.push(a); } for (let i = 0; i < CUM.length; i++) CUM[i] /= a; }
+const typeAt = h => { for (let i = 0; i < CUM.length; i++) if (h <= CUM[i]) return TYPES[i]; return TYPES[TYPES.length - 1]; };
 const sets = {};
 const o = new THREE.Object3D(), col = new THREE.Color();
 function initSets() {
@@ -68,11 +71,11 @@ function rebuildParked(px, pz) {
         if (hash2(e.id * 3 + side, Math.floor(s)) > fill) continue;
         const x = ax + ux * s - uz * off * side, z = az + uz * s + ux * off * side;
         if (Math.hypot(x - px, z - pz) > PRAD || isWater(x, z) || buildingAt(x, z) || blockedAt(x, z, 2.3, 'parked') || taken.has(spotKey(x, z))) continue;   // not in front of hydrants, poles, trees
-        const t = TYPES[Math.floor(hash2(x * 0.7, z * 0.7) * TYPES.length)], S = sets[t]; if (S.n >= CAP) continue;
+        const t = typeAt(hash2(x * 0.7, z * 0.7)), S = sets[t]; if (S.n >= CAP) continue;
         const yaw = Math.atan2(-ux * side, -uz * side);   // parked facing the way traffic goes on that side
         const y = groundY(x, z) + 0.22;
         o.position.set(x, y, z); o.rotation.set(0, yaw, 0); o.scale.set(1, 1, 1); o.updateMatrix();
-        const paint = COLS[Math.floor(hash2(z, x) * COLS.length)];
+        const pal = MODELS[t].cols || COLS, paint = pal[Math.floor(hash2(z, x) * pal.length)];
         S.paint.setMatrixAt(S.n, o.matrix); S.dark.setMatrixAt(S.n, o.matrix); S.paint.setColorAt(S.n, col.set(paint));
         const spot = { x, z, yaw, t, col: paint, S, i: S.n }; S.n++;
         for (const k of [-1, 0, 1]) coll.push({ x: x + ux * k * 1.5, z: z + uz * k * 1.5, r: 1.0, top: y + 1.5, spot });
@@ -80,7 +83,7 @@ function rebuildParked(px, pz) {
       }
     }
   }
-  for (const S of Object.values(sets)) { for (const m of [S.paint, S.dark]) { m.count = S.n; m.instanceMatrix.needsUpdate = true; } if (S.paint.instanceColor) S.paint.instanceColor.needsUpdate = true; }
+  for (const S of Object.values(sets)) { for (const m of [S.paint, S.dark]) { m.count = S.n; m.visible = S.n > 0; m.instanceMatrix.needsUpdate = true; } if (S.paint.instanceColor) S.paint.instanceColor.needsUpdate = true; }
   setColliders('parked', coll);
 }
 function rebuildWires(px, pz) {

@@ -51,6 +51,7 @@ import { initRichmond, updateRichmond } from './richmond.js';
 import { initDtes, updateDtes, dtesMarkers } from './dtes.js';
 import { updateBreakables } from './breakables.js';
 import { initCityLife, updateCityLife } from './citylife.js';
+import { initGarage, updateGarage } from './garage.js';
 import { initCityEvents, updateCityEvents, lifeTalkers } from './cityevents.js';
 import { initAdverts, updateAdverts } from './adverts.js';
 import { initPaint, updatePaint } from './paint.js';
@@ -78,7 +79,7 @@ async function load() {
   await progress('Building 38,000 real buildings and 32,000 streets… (this takes a moment)', 0.3);
   initCity((m, f) => { steps.push([m, f]); });
   await progress('Building landmarks…', 0.82);
-  buildLandmarks(); initSkyline(); initBeaches(); initDistricts(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initPaint(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
+  buildLandmarks(); initSkyline(); initBeaches(); initDistricts(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initGarage(player, discoverSecret); initPaint(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
   await progress('Drawing the maps…', 0.9);
   buildMaps();
   await progress('Ready!', 1);
@@ -339,7 +340,7 @@ function loop(now, manual) {
   __mark('updateSnowFun(dt, play');
     updateSeaLife(dt, player); updateIsland(dt, player); updateScenery(dt, player); updateShips(dt, player); updateBoats(dt, player); updateAirTraffic(dt, player); updateRichmond(dt, player); updateDtes(dt, player); updateBreakables(dt, player); updateCumulus(dt);
   __mark('updateSeaLife(dt, play');
-    updateCityLife(dt, player); updatePaint(dt, player); updateCityEvents(dt, player); updateAdverts(dt, player);   // city life: clutter, events, ads
+    updateCityLife(dt, player); updateGarage(dt); updatePaint(dt, player); updateCityEvents(dt, player); updateAdverts(dt, player);   // city life: clutter, events, ads
   __mark('cityLife');
   __mark('updateSeaLife(dt, play');
     updateStreetProps(player);
