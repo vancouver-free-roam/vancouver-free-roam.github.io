@@ -447,6 +447,21 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
       float up = max(0.0, rel - (((sty < 0.5 && sd2 > 0.3) || (sty > 1.5 && sty < 2.5 && sd2 > 0.55) || (sty > 4.5 && sty < 5.5)) ? 4.4 : 0.0));
       float fFl = fract(up / P.x), fCl = fract(fU / P.y);
       float fWin = step(0.5 - P.w * 0.5, fFl) * step(fFl, 0.5 + P.w * 0.5) * step(0.5 - P.z * 0.5, fCl) * step(fCl, 0.5 + P.z * 0.5) * fWall;
+      // RECESSED WINDOWS (2026-11-22): punched windows are set back into the wall (20 cm, houses 12 cm). Follow the view ray
+      // into the wall to the glass plane: if it still lands inside this opening you see glass (its details shift with
+      // parallax), otherwise you're looking at the reveal (the inner side of the opening): shaded soffit on top, a lit sill
+      // at the bottom, half-shaded jambs at the sides. Flat painted windows were the main "blocky box" giveaway.
+      float rvl = 0.0, rvShade = 1.0;
+      if (sty > 0.5 && sty < 4.5 && fWin > 0.5 && !(shopLevel && rel < 4.4)) {
+        vec3 Vv = normalize(cameraPosition - vWP); vec3 Tt = abs(vWN.x) > abs(vWN.z) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+        float vn = max(abs(dot(Vv, vWN)), 0.12), dep = (sty > 2.5 && sty < 3.5) ? 0.12 : 0.2;
+        float up2 = up - Vv.y * dep / vn, fU2 = fU - dot(Vv, Tt) * dep / vn;
+        float wyc = (up2 / P.x - floor(up / P.x) - (0.5 - P.w * 0.5)) / P.w, wxc = (fU2 / P.y - floor(fU / P.y) - (0.5 - P.z * 0.5)) / P.z;
+        float in2 = step(0.0, wyc) * step(wyc, 1.0) * step(0.0, wxc) * step(wxc, 1.0);
+        rvl = 1.0 - in2;
+        rvShade = wyc > 1.0 ? 0.42 : wyc < 0.0 ? 0.92 : 0.66;   // soffit / sill / jambs
+        if (in2 > 0.5) { fFl = fract(up2 / P.x); fCl = fract(fU2 / P.y); }
+      }
       float fR = fHash(floor(vec3(fU / P.y, up / P.x, vWN.x * 3.0 + vWN.z * 7.0)) + 0.5 + sd);
       float fBl = step(0.86, fR);
       vec3 wall = diffuseColor.rgb;
@@ -475,6 +490,15 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
       if (sty < 0.5) { float mul = step(fract(fU / 1.5), 0.05) + step(0.94, fFl); fGl = mix(fGl, vec3(0.2, 0.22, 0.24), clamp(mul, 0.0, 1.0) * fWin); }
       float balc = (sty < 1.5 && sd > 0.45 && up > 0.5) ? 1.0 : 0.0;
       diffuseColor.rgb = mix(wall, fGl, fWin);
+      diffuseColor.rgb = mix(diffuseColor.rgb, wall * rvShade, rvl);   // the reveal of a recessed window (see above)
+      fWin *= 1.0 - rvl;   // the reveal is wall: no glass shine, no frame, never lit at night
+      // floor ledges / string courses on many concrete + brick buildings: a pale projecting band at each floor line with a
+      // soft shadow tucked under it (breaks up the flat slab walls)
+      if (sty > 0.5 && sty < 2.5 && up > 0.5 && sd3 > 0.3) {
+        float lf = fract(up / P.x), notWin = fWall * (1.0 - fWin) * (1.0 - rvl);
+        diffuseColor.rgb = mix(diffuseColor.rgb, wall * 1.16 + vec3(0.02), step(lf, 0.035) * notWin);
+        diffuseColor.rgb *= 1.0 - 0.24 * step(0.955, lf) * notWin;
+      }
       float slab = balc * step(fFl, 0.07) * fWall, rail = balc * step(0.07, fFl) * step(fFl, 0.3) * step(0.25, fract(fU / 7.0)) * fWall;
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.87, 0.86), slab);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.45, 0.6, 0.66) * 0.6 + diffuseColor.rgb * 0.4, rail * 0.75);
@@ -490,14 +514,18 @@ float fNoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * 
         float row = vWP.y / 0.075, off = mod(floor(row), 2.0) * 0.5, bu = fU / 0.24 + off;
         float mort = max(step(0.84, fract(row)), step(0.93, fract(bu)));
         float bv = fHash(vec3(floor(bu), floor(row), sd + 5.0));
-        diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb * (0.86 + 0.26 * bv), vec3(0.62, 0.6, 0.56), mort * 0.75), wallOnly * nearA);
+        // fade the courses out BEFORE a brick gets smaller than ~2 pixels (later fading drew wavy moiré rings), into the blended
+        // colour bricks + mortar make from afar
+        float nearBr = 1.0 - smoothstep(0.012, 0.04, dU);
+        vec3 farBrick = mix(diffuseColor.rgb, vec3(0.62, 0.6, 0.56), 0.16);
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(farBrick, mix(diffuseColor.rgb * (0.86 + 0.26 * bv), vec3(0.62, 0.6, 0.56), mort * 0.75), nearBr), wallOnly);
       } else if (sty > 2.5 && sty < 3.5) {   // wood lap siding (the classic Vancouver house): a shadow line under every board
         float bd = fract(vWP.y / 0.18);
-        diffuseColor.rgb *= mix(1.0, 0.78 + 0.22 * smoothstep(0.0, 0.3, bd), wallOnly * nearB);
+        diffuseColor.rgb *= mix(1.0, mix(0.89, 0.78 + 0.22 * smoothstep(0.0, 0.3, bd), 1.0 - smoothstep(0.03, 0.09, dU)), wallOnly);   // (fades to the average shade before the boards alias)
         // white trim at the corners of the wall is suggested by the frames below
       } else if (sty > 3.5 && sty < 4.5) {   // industrial: corrugated metal cladding (vertical ribs every 30 cm), still readable mid-distance
-        float rib = abs(fract(fU / 0.3) - 0.5) * 2.0, midR = 1.0 - smoothstep(0.08, 0.6, dU);
-        diffuseColor.rgb *= mix(1.0, 0.8 + 0.28 * smoothstep(0.15, 0.6, rib), wallOnly * midR);
+        float rib = abs(fract(fU / 0.3) - 0.5) * 2.0, midR = 1.0 - smoothstep(0.05, 0.15, dU);
+        diffuseColor.rgb *= mix(1.0, mix(0.95, 0.8 + 0.28 * smoothstep(0.15, 0.6, rib), midR), wallOnly);
       } else if (sty > 0.5 && sty < 1.5) {   // concrete: panel joints + tie-hole dots
         float j = max(step(0.985, fract(up / P.x)), step(0.99, fract(fU / 3.0)));
         diffuseColor.rgb *= mix(1.0, 0.72, j * wallOnly * nearB);

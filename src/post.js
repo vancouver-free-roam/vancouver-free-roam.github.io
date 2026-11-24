@@ -78,7 +78,8 @@ export function updateCumulus(dt) {
   updateWisps(dt);
   // most at "partly cloudy"; on a clear day only a faint few (80 puffs at 1/3 opacity veiled the whole clear sky milky white,
   // where Dav's sunny photos show a deep blue sky with the odd cloud)
-  const cover = G.cloud || 0, amount = (cover < 0.32 ? 0.12 + 0.88 * Math.max(0, (cover - 0.08) / 0.24) : Math.max(0, 1 - (cover - 0.32) * 2.2)) * (1 - (G.wet || 0)), night = G.night || 0;
+  // golden hour: more clouds, so they catch the pink-orange light (the fiery Vancouver sunsets in Dav's photos)
+  const cover = G.cloud || 0, amount = Math.max((cover < 0.32 ? 0.12 + 0.88 * Math.max(0, (cover - 0.08) / 0.24) : Math.max(0, 1 - (cover - 0.32) * 2.2)), 0.7 * SKY_LOOK.gold.value + 0.5 * SKY_LOOK.dusk.value) * (1 - (G.wet || 0)), night = G.night || 0;
   col.copy(sun.color).lerp(_white, 0.38);   // bright white at noon…
   col.lerp(_pink, SKY_LOOK.gold.value * 0.85).lerp(_dusk, SKY_LOOK.dusk.value * 0.8);   // …glowing pink-orange at sunset, dusky purple-pink in the blue hour (like the photos)
   col.multiplyScalar(1 - night * 0.8 + SKY_LOOK.dusk.value * 0.35);
