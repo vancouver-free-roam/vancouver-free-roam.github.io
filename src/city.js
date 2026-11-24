@@ -919,6 +919,17 @@ export function collideBuildings(obj, r, y = -1e9) {
 export const nearBuildings = (x, z, r) => bldGrid.near(x, z, r, []);
 export function buildingAt(x, z) { for (const b of bldGrid.near(x, z, 0, _b)) if (x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && inPoly(x, z, b.p)) return b; return null; }
 const _r = [];
+// is (x, z) on the driving part of any ground-level street or lane (+ pad)? Props (poles, lamps, signs, cones) check this so
+// nothing ends up standing where cars drive (a pole placed beside one street used to land in the middle of a crossing lane)
+const _cw = [];
+export function inRoadway(x, z, pad = 0.4, skipR = -1) {   // skipR: ignore this road (roadwork cones in their own curb lane)
+  for (const e of roadGrid.near(x, z, 14, _cw)) {
+    const q = M.roads[e.r]; if (q.t > 6 || q.b || e.r === skipR) continue;
+    const ax = NX(e.a), az = NZ(e.a), dx = NX(e.b) - ax, dz = NZ(e.b) - az, L2 = dx * dx + dz * dz || 1, t = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1);
+    if (Math.hypot(x - ax - dx * t, z - az - dz * t) < q.w / 2 + pad) return true;
+  }
+  return false;
+}
 export function nearestRoad(x, z, rad = 40, filter = () => true) {
   let best = null, bd = rad;
   for (const e of roadGrid.near(x, z, rad, _r)) {

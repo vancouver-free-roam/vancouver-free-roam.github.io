@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { G, scene, std, tapped } from './core.js';
 import { isWater } from './terrain.js';
-import { roadGrid, NX, NZ, nodeY, surfaceY, walkY, buildingAt, setRoadGlow } from './city.js';
+import { roadGrid, NX, NZ, nodeY, surfaceY, walkY, buildingAt, setRoadGlow, inRoadway } from './city.js';
 import { setCarLights } from './vehicles.js';
 import { setColliders, fromInstances, blockedAt } from './colliders.js';
 import { ui } from './ui.js';
@@ -41,7 +41,7 @@ function rebuild(px, pz) {
     for (let k = 0, s = 12 + (e.id % 3) * 8; s < L - 4 && n < CAP; k++, s += SPACING) {
       const side = (k + e.id) % 2 ? 1 : -1, nx = -uz * side, nz = ux * side;
       const x = ax + ux * s + nx * off, z = az + uz * s + nz * off;
-      if (Math.hypot(x - px, z - pz) > RAD || isWater(x, z) || buildingAt(x, z) || blockedAt(x, z, 0.4, 'lampposts')) continue;   // not inside a tree / bench / hydrant
+      if (Math.hypot(x - px, z - pz) > RAD || isWater(x, z) || buildingAt(x, z) || inRoadway(x, z, 0.5) || blockedAt(x, z, 0.4, 'lampposts')) continue;   // not inside a tree / bench / hydrant
       const ny = nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * (s / L), y = walkY(x, z, ny + 2);
       const yaw = Math.atan2(nz, -nx);   // the arm (local +x) points back toward the road
       _q.setFromAxisAngle(_up, yaw); _p.set(x, y, z); _m.compose(_p, _q, _s);

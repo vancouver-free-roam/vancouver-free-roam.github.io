@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { G, scene, std, hash2 } from './core.js';
 import { isWater } from './terrain.js';
-import { roadGrid, nodeEdges, NX, NZ, nodeY, surfaceY, walkY, buildingAt } from './city.js';
+import { roadGrid, nodeEdges, NX, NZ, nodeY, surfaceY, walkY, buildingAt, inRoadway } from './city.js';
 import { setColliders, fromInstances , blockedAt } from './colliders.js';
 import { bake, BX, SPs } from './tint.js';
 
@@ -51,7 +51,7 @@ const meterHead = mk(bake([[BX, '#3a3f44', 0, 1.33, 0, 0.22, 0.36, 0.16], [new T
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler(), _c = new THREE.Color();
 const put = (mesh, i, x, y, z, yaw, sx = 1, sy = 1, sz = 1) => { _e.set(0, yaw, 0); _q.setFromEuler(_e); _p.set(x, y, z); _s.set(sx, sy, sz); _m.compose(_p, _q, _s); mesh.setMatrixAt(i, _m); };
 const drive = r => r.t <= 5 && !r.b;
-const free = (x, z) => !buildingAt(x, z) && !isWater(x, z);
+const free = (x, z) => !buildingAt(x, z) && !isWater(x, z) && !inRoadway(x, z, 0.45);   // never in a driving lane (incl. a crossing lane)
 // nothing else standing there? (trees, lamp posts, mapped benches, patio tables, and props placed earlier in this rebuild)
 const taken = new Map(), tk = (x, z) => Math.floor(x / 3) * 92821 + Math.floor(z / 3);
 function roomFor(x, z, r) {

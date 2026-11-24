@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { G, scene, std, hash2, R, pick, canvasTex, toXZ, tapped } from './core.js';
 import { isWater, groundY } from './terrain.js';
-import { roadGrid, NX, NZ, walkY, surfaceY, buildingAt, nearBuildings, nearestRoad, pois, isDriveType } from './city.js';
+import { roadGrid, NX, NZ, walkY, surfaceY, buildingAt, nearBuildings, nearestRoad, pois, isDriveType, inRoadway } from './city.js';
 import { setColliders, blockedAt, collideStatic } from './colliders.js';
 import { makeVehicle } from './vehicles.js';
 import { peds, say } from './people.js';
@@ -77,6 +77,7 @@ const supermarkets = pois.filter(p => p.k === 'shop' && /supermarket|convenience
 function free(x, z, r) { return !isWater(x, z) && !buildingAt(x, z) && !blockedAt(x, z, r + 0.15) && !items.some(it => Math.abs(it.x - x) < r + it.r && Math.abs(it.z - z) < r + it.r); }
 function addItem(type, x, z, yaw, h, extra = {}) {
   const K = KINDS[type]; if (!free(x, z, K[0])) return null;
+  if (inRoadway(x, z, 0.3, extra.own ?? -1)) return null;   // nothing in a driving lane (roadwork only in its own street's curb lane)
   const k = keyOf(x, z), st = smashed.get(k); if (st !== undefined && G.t - st < 60) return null;
   const y = walkY(x, z), refs = drawItem(type, x, y, z, yaw, h); if (!refs.length) return null;
   const c = { x, z, r: K[0], top: y + K[1], base: y, refs, kind: K[3] };
@@ -141,9 +142,9 @@ function rebuild(px, pz) {
     if (he < (winter ? 0.012 : 0.03) && L > 35 && r.t >= 3) {
       const side = he < 0.015 ? 1 : -1, off = r.w / 2 - 0.9, s0 = L * 0.25, s1 = Math.min(L * 0.8, s0 + 40), yaw = Math.atan2(ux, uz);
       const at = s => [ax + ux * s - uz * off * side, az + uz * s + ux * off * side];
-      for (let s = s0; s <= s1; s += 3.2) { const [x, z] = at(s); addItem('cone', x, z, 0, hash2(s, he)); }
-      { const [x, z] = at(s0 - 4); addItem('sign', x - uz * 0.5 * side, z + ux * 0.5 * side, yaw + (side > 0 ? 0 : Math.PI), 0, { zone: true }); }
-      for (const s of [s0 + 6, s1 - 6]) { const [x, z] = at(s); addItem('barrier', x - uz * 0.4 * side, z + ux * 0.4 * side, yaw, hash2(s, 2)); }
+      for (let s = s0; s <= s1; s += 3.2) { const [x, z] = at(s); addItem('cone', x, z, 0, hash2(s, he), { own: e.r }); }
+      { const [x, z] = at(s0 - 4); addItem('sign', x - uz * 0.5 * side, z + ux * 0.5 * side, yaw + (side > 0 ? 0 : Math.PI), 0, { zone: true, own: e.r }); }
+      for (const s of [s0 + 6, s1 - 6]) { const [x, z] = at(s); addItem('barrier', x - uz * 0.4 * side, z + ux * 0.4 * side, yaw, hash2(s, 2), { own: e.r }); }
     }
     // sidewalks: litter bins, news boxes, dumped scooters
     for (let s = 8; s < L - 6; s += 38) {

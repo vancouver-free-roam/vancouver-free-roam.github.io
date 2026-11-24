@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { G, scene, std, hash2 } from './core.js';
 import { groundY } from './terrain.js';
-import { buildings, bldGrid, nearestRoad, isDriveType, roadGrid, NX, NZ, roadName, buildingAt } from './city.js';
+import { buildings, bldGrid, nearestRoad, isDriveType, roadGrid, NX, NZ, roadName, buildingAt, inRoadway } from './city.js';
 import { setColliders } from './colliders.js';
 import { _fronts } from './storefronts.js';
 
@@ -102,7 +102,7 @@ function laneways(px, pz) {   // power poles + lines down the back lanes (unname
     const r = M.roads[e.r]; if (r.t !== 6 || roadName(r) || r.b || r.rg) continue;
     const ax = NX(e.a), az = NZ(e.a), L = e.len; if (L < 30) continue;
     const ux = (NX(e.b) - ax) / L, uz = (NZ(e.b) - az) / L, off = r.w / 2 + 0.6, n = Math.max(1, Math.round(L / 34)), poles = [];
-    for (let k = 0; k <= n; k++) { const s = L * k / n, x = ax + ux * s - uz * off, z = az + uz * s + ux * off; if (Math.hypot(x - px, z - pz) > RAD || buildingAt(x, z)) { poles.push(null); continue; } const g = groundY(x, z); poles.push([x, g + 10.4, z]);
+    for (let k = 0; k <= n; k++) { const s = L * k / n, x = ax + ux * s - uz * off, z = az + uz * s + ux * off; if (Math.hypot(x - px, z - pz) > RAD || buildingAt(x, z) || inRoadway(x, z, 0.35)) { poles.push(null); continue; } const g = groundY(x, z); poles.push([x, g + 10.4, z]);   // (inRoadway: end poles used to land in the crossing lane / street)
       if (np < PCAP) { o.position.set(x, g + 5.2, z); o.rotation.set(0, 0, 0); o.scale.set(0.15, 10.4, 0.15); o.updateMatrix(); cylIM.setMatrixAt(np++, o.matrix); }
       box(x, g + 9.9, z, 2.2, 0.12, 0.12, Math.atan2(ux, uz), '#5a4330');   // crossarm
       if (hash2(x, z) < 0.25) box(x - uz * 0.35, g + 8.4, z + ux * 0.35, 0.55, 0.9, 0.55, 0, '#7d8288');   // a transformer can

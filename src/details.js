@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { G, scene, std, canvasTex, hash2, inPoly, tapped, pick } from './core.js';
 import { heightAt, isWater } from './terrain.js';
-import { surfaceY, buildingAt, nearBuildings, pois } from './city.js';
+import { surfaceY, buildingAt, nearBuildings, pois, inRoadway } from './city.js';
 import { setColliders, fromInstances } from './colliders.js';
 import { ui } from './ui.js';
 import { QE_FOUNTAIN } from './qepark.js';
@@ -154,6 +154,7 @@ function rebuildFurniture(px, pz) {
   fx = px; fz = pz; const n = {}; flagList.length = 0; let poles = 0;
   for (let i = 0; i < FURN.length; i += 3) {
     const code = FURN[i], x = FURN[i + 1], z = FURN[i + 2]; if (Math.abs(x - px) > 450 || Math.abs(z - pz) > 450) continue;
+    if (inRoadway(x, z, 0)) continue;   // mapped benches/racks/flagpoles that fall inside our (sometimes wider) drawn street
     const y = surfaceY(x, z);
     if (code === 9) { if (poles < 300) { _p.set(x, y, z); _q.identity(); _m.compose(_p, _q, _s); poleIM.setMatrixAt(poles++, _m); flagList.push({ x, y: y + 8.4, z, ph: hash2(x, z) * 6 }); } continue; }
     const im = instanced[code]; if (!im) continue; const k = n[code] || 0; if (k >= CAP) continue;
