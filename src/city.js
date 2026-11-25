@@ -238,7 +238,84 @@ function roadPoints(r, lift, raw = false) {
     s0 += len;
   }
   if (r.b && !r.rg && !raw) bridgeClearance(r, out);
+  if (r.b && r.t >= 7 && !raw) snapAlong(r, out);
   return out;
+}
+// ---- bridge sidewalks: a footway / cycleway bridge piece that runs beside a road bridge is laid parallel to the road
+// deck, just outside its edge, at the deck's height (OSM draws them a few metres off, and each got its own height profile,
+// so they wandered, hung beside the bridge or sank below it). Worked out once for every bridge path (`prepAlong`).
+let ALONG = null, _compN = 0;
+const _al = [];
+function deckPts(qi) { const q = M.roads[qi]; return q._dp || (q._dp = roadPoints(q, (q.t <= 4 ? 0.26 : 0.22) + (qi % 9) * 0.004)); }
+function deckHit(x, z, y, ux, uz) {   // the nearest road-bridge deck segment running alongside (x, z)
+  let best = null; const seen = new Set();
+  for (const e of roadGrid.near(x, z, 12, _al)) {
+    const q = M.roads[e.r]; if (!q.b || q.t > 6 || seen.has(e.r)) continue; seen.add(e.r);
+    const dp = deckPts(e.r), hw = q.w / 2;
+    for (let j = 1; j < dp.length; j++) {
+      const a = dp[j - 1], b = dp[j], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz); if (L < 0.01) continue;
+      const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (L * L), 0, 1), cx = a.x + dx * t, cz = a.z + dz * t, d = Math.hypot(x - cx, z - cz), ex = d - hw;
+      if (ex < -4 || ex > 9 || (best && ex >= best.ex)) continue;   // the deck whose edge reaches furthest out (OSM doubles some decks: Granville)
+      const dot = (dx * ux + dz * uz) / L; if (Math.abs(dot) < 0.9) continue;   // must run alongside, not cross
+      const dy = a.y + (b.y - a.y) * t; if (Math.abs(y - dy) > 70) continue;   // a path's own bridge height can be way off (Lions Gate paths sat 30 m below the deck)
+      const side = Math.sign((x - a.x) * -dz + (z - a.z) * dx) || 1;
+      best = { qi: e.r, j, t, d, ex, hw, side, ps: side * Math.sign(dot), key: q.comp ? (q.comp.id ??= ++_compN) : 'r' + e.r };   // ps: side seen walking along the path (pieces of one deck may be drawn either way)
+    }
+  }
+  return best;
+}
+function prepAlong() {
+  ALONG = 'busy'; const items = [];
+  M.roads.forEach((r, ri) => {
+    if (!r.b || r.t < 7) return;
+    const p = roadPoints(r, 0.14), hits = p.map((pt, i) => { const q = p[Math.min(i + 1, p.length - 1)], o = p[Math.max(i - 1, 0)], L = Math.hypot(q.x - o.x, q.z - o.z) || 1; return deckHit(pt.x, pt.z, pt.y, (q.x - o.x) / L, (q.z - o.z) / L); });
+    const n = hits.filter(Boolean).length; if (n < 3 || n < p.length * 0.3) return;
+    let sum = 0; for (const h of hits) if (h) sum += h.ps; const ps = Math.sign(sum) || 1;
+    for (let i = 0; i < hits.length; i++) if (hits[i] && hits[i].ps !== ps) hits[i] = null;   // never flip to the deck's other side (a wide main span may be its own deck: that's fine)
+    // short gaps (< 25 m) between hits stay on the deck too (filled in by interpolation in snapAlong)
+    const cum = [0]; for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + Math.hypot(p[i].x - p[i - 1].x, p[i].z - p[i - 1].z));
+    for (let i = 0; i < hits.length; i++) if (!hits[i]) { let j = i; while (j < hits.length && !hits[j]) j++; if (i > 0 && j < hits.length && cum[j] - cum[i - 1] < 25) for (let k = i; k < j; k++) hits[k] = { gap: [i - 1, j] }; i = j; }
+    const ex = hits.filter(h => h && !h.gap).map(h => h.ex).sort((a, b) => a - b);
+    let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const q of p) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); z0 = Math.min(z0, q.z); z1 = Math.max(z1, q.z); }
+    items.push({ r, hits, tw: r.w / 2, med: ex[ex.length >> 1], p, xz: p.filter((_, i) => i % 2 === 0), box: [x0 - 8, z0 - 8, x1 + 8, z1 + 8] });
+  });
+  // a sidewalk + cycle track on the same side sit next to each other, not on top (the inner one keeps the inner slot)
+  const segD = (x, z, p) => { let m = 1e9; for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i], dx = b.x - a.x, dz = b.z - a.z, t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1), 0, 1); m = Math.min(m, Math.hypot(x - a.x - dx * t, z - a.z - dz * t)); } return m; };
+  items.sort((a, b) => a.med - b.med); const done = [];
+  for (const it of items) {
+    let off = clamp(it.med, it.tw + 0.3, it.tw + 4.3);
+    for (const o of done) {
+      if (o.box[0] > it.box[2] || o.box[2] < it.box[0] || o.box[1] > it.box[3] || o.box[3] < it.box[1]) continue;
+      if (it.xz.filter(b => segD(b.x, b.z, o.p) < 6).length >= Math.max(3, it.xz.length * 0.3)) off = Math.max(off, o.off + o.tw + it.tw + 0.3);
+    }
+    it.off = off; it.r._al = it; done.push(it);
+  }
+  for (const it of items) { delete it.p; delete it.xz; }
+  ALONG = true;
+}
+function snapAlong(r, out) {
+  if (ALONG === null) prepAlong(); if (ALONG !== true) return;
+  const it = r._al; if (!it || it.hits.length !== out.length) return;
+  const cum = [0]; for (let i = 1; i < out.length; i++) cum.push(cum[i - 1] + Math.hypot(out[i].x - out[i - 1].x, out[i].z - out[i - 1].z));
+  const free = [], T = []; for (let i = 0; i < out.length; i++) if (!it.hits[i]) free.push(cum[i]);
+  for (let i = 0; i < out.length; i++) {   // the spot beside the deck for each point
+    const h = it.hits[i]; if (!h || h.gap) continue;
+    const dp = deckPts(h.qi), a = dp[h.j - 1], b = dp[h.j], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+    const cx = a.x + dx * h.t, cz = a.z + dz * h.t, lat = h.side * (h.hw + it.off);
+    T[i] = { x: cx - dz / L * lat, z: cz + dx / L * lat, y: a.y + (b.y - a.y) * h.t + CURB };
+  }
+  for (let i = 0; i < out.length; i++) { const h = it.hits[i]; if (h && h.gap) { const [u, v] = h.gap, A = T[u], B = T[v], k = (cum[i] - cum[u]) / (cum[v] - cum[u] || 1); if (A && B) T[i] = { x: A.x + (B.x - A.x) * k, z: A.z + (B.z - A.z) * k, y: A.y + (B.y - A.y) * k }; } }
+  const S = T.map((g, i) => {   // light smoothing (± 2 points) so a switch between deck pieces never kinks the path
+    if (!g) return g; let x = 0, z = 0, y = 0, n = 0;
+    for (let k = i - 2; k <= i + 2; k++) if (T[k]) { x += T[k].x; z += T[k].z; y += T[k].y; n++; }
+    return { x: x / n, z: z / n, y: y / n };
+  });
+  for (let i = 0; i < out.length; i++) {
+    const g = S[i]; if (!g) continue;
+    let df = 1e9; for (const c of free) df = Math.min(df, Math.abs(c - cum[i]));
+    const w = free.length ? smooth(0, 12, df) : 1, p = out[i];   // ease between the mapped line and the deck where it leaves the bridge
+    p.x += (g.x - p.x) * w; p.z += (g.z - p.z) * w; p.y += (g.y - p.y) * w;
+  }
 }
 // make sure a bridge deck clears whatever road/track it crosses (5.6 m), with smooth ramps up from where it meets land.
 // Worked out over the whole connected deck (by position), so the short pieces a long viaduct is mapped as all agree.
@@ -338,7 +415,7 @@ function buildRoads() {
     }
     if (r.b) {
       // the drivable surface follows the drawn deck exactly (including the clearance arch)
-      if (!r.rg) for (let i = 1; i < pts.length; i++) {
+      if (!r.rg || t > 6) for (let i = 1; i < pts.length; i++) {   // (region bridge FOOTpaths had no walkable deck at all)
         const a = pts[i - 1], b = pts[i];
         bridgeGrid.addBox(Math.min(a.x, b.x) - hw, Math.min(a.z, b.z) - hw, Math.max(a.x, b.x) + hw, Math.max(a.z, b.z) + hw, { ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, hw });
       }
