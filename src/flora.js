@@ -6,7 +6,7 @@
 // Walk close to add a plant to the 📖 field guide; P photographs it; E eats ripe berries.
 import * as THREE from 'three';
 import { G, scene, camera, hash2, vnoise, tapped } from './core.js';
-import { heightAt, isWater, waterLevel, maskAt, isSnow, groundY, wildForest, townDensity, isNorthShoreTown, isRichmond, FOLIAGE, snowLine } from './terrain.js';
+import { heightAt, isWater, waterLevel, maskAt, isSnow, groundY, wildForest, townDensity, isNorthShoreTown, isRichmond, FOLIAGE, snowLine, isClearZone } from './terrain.js';
 import { walkY, buildingAt, nearBuildings, nearestRoad, pavedY } from './city.js';
 import { shrubGeo } from './trees.js';
 import { onIsland } from './island.js';
@@ -146,7 +146,7 @@ const openGround = (x, z) => areaKind(x, z, 'beach') || areaKind(x, z, 'pitch') 
 function habitatAt(x, z) {
   if (isWater(x, z)) return null;
   const h = heightAt(x, z); if (isSnow(x, z, h) || h > snowLine() - 250) return null;   // the drawn snow starts a little below the snow line
-  if (buildingAt(x, z)) return null;
+  if (buildingAt(x, z) || isClearZone(x, z)) return null;
   if (openGround(x, z)) return null;   // beaches, sports fields, playgrounds: no plants on the sand or the pitch
   const nr = nearestRoad(x, z, 12); if (nr && nr.d < nr.road.w / 2 + 0.8) return null;
   const island = onIsland(x, z), m = maskAt(x, z), forest = wildForest(x, z, h);

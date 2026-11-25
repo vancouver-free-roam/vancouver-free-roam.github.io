@@ -19,6 +19,8 @@ import { activeMission, discover } from './missions.js';
 import { openGame } from './minigames.js';
 import { ui } from './ui.js';
 import { sfx } from './sound.js';
+import { initGolf, updateGolf, golfPrompt } from './golf.js';
+import { ensurePark, skaterStep, skatePrompt, initSkateparks, updateSkateparks } from './skatepark.js';
 const onRoad = (x, z) => { const r = nearestRoad(x, z, 14, q => isDriveType(q.t)); return (r && r.d < r.road.w / 2 + 1.5) || buildingAt(x, z); };
 
 const NEAR = 300, CAP = 110;
@@ -99,14 +101,8 @@ function buildVenue(a) {
     for (const s of [-1, 1]) { const [x, y, z] = at2(s * (V.L / 2 - 1), 0); for (const w of [-3.66, 3.66]) { const [px, , pz] = at2(s * (V.L / 2 - 1), w); P.add(new THREE.BoxGeometry(0.12, 2.44, 0.12), '#ffffff', px, y + 1.22, pz); } P.add(new THREE.BoxGeometry(7.4, 0.12, 0.12), '#ffffff', x, y + 2.44, z, yaw); V['goal' + s] = { x, z, s }; }
     V.players = []; for (let i = 0; i < 8; i++) V.players.push(person(V, R(-V.L * 0.35, V.L * 0.35), R(-V.W * 0.35, V.W * 0.35), { tm: i % 2 }));
     V.ball = ballMesh('soccer'); V.bx = V.x; V.bz = V.z; V.by = gy + 0.11; V.bvx = 0; V.bvz = 0; V.bvy = 0; V.pass = { from: 0, to: 1, t: 0 };
-  } else if (V.kind === 'skate') {
-    // concrete quarter pipes at both ends, a fun box and a rail in the middle (all decks: ride them with the skateboard)
-    const conc = '#b8b5ad';
-    for (const s of [-1, 1]) { const u = s * (V.L / 2 - 3), [x, y, z] = at2(u, 0), w = Math.min(V.W * 0.8, 10); if (onRoad(x, z) || onRoad(...local(V, u - s * 3, 0))) continue; for (let k = 0; k < 6; k++) { const hh = 0.35 * (k + 1); P.add(new THREE.BoxGeometry(w, hh, 0.55), conc, x - V.ux * s * k * 0.5, y + hh / 2, z - V.uz * s * k * 0.5, yaw); } const [x0, y0, z0] = at2(u - s * 3, 0); addDeck(x0, z0, y0, x, z, y + 2.1, w / 2); }
-    if (!onRoad(...local(V, -2.5, -V.W * 0.2)) && !onRoad(...local(V, 2.5, -V.W * 0.2))) { const [x, y, z] = at2(0, -V.W * 0.2); P.add(new THREE.BoxGeometry(2.2, 0.5, 5), conc, x, y + 0.25, z, yaw); const [ax, , az] = at2(-2.5, -V.W * 0.2), [bx, , bz] = at2(2.5, -V.W * 0.2); addDeck(ax, az, y + 0.5, bx, bz, y + 0.5, 1.1); }
-    if (!onRoad(...local(V, -3, V.W * 0.22)) && !onRoad(...local(V, 3, V.W * 0.22))) { const [x, y, z] = at2(0, V.W * 0.22); P.add(new THREE.BoxGeometry(0.06, 0.06, 6), '#c9ced3', x, y + 0.45, z, yaw); for (const u of [-2.5, 2.5]) { const [px, py, pz] = at2(u, V.W * 0.22); P.add(new THREE.BoxGeometry(0.05, 0.45, 0.05), '#c9ced3', px, py + 0.22, pz); } }
-    V.skaters = []; V.lim = Math.min(V.L / 2 - 4, 20);
-    for (let i = 0; i < 4; i++) { const v = R(-V.W / 3, V.W / 3); if (onRoad(...local(V, -V.lim, v)) || onRoad(...local(V, V.lim, v)) || onRoad(...local(V, 0, v))) continue; V.skaters.push(person(V, 0, v, { skate: true, sp: R(3, 6), dir: Math.random() < 0.5 ? 1 : -1, v })); }
+  } else if (V.kind === 'skate') {   // a real concrete park (skatepark.js): quarter pipes, funbox, kicker, bank, ledge, rail + locals riding it
+    V.park = ensurePark(V, a, onRoad); V.skaters = []; for (let i = 0; i < 4; i++) V.skaters.push(person(V, 0, 0, { skate: true }));
   } else if (V.kind === 'track') {
     V.runners = []; for (let i = 0; i < 5; i++) V.runners.push(person(V, 0, 0, { run: true, ang: Math.random() * 6.28, sp: R(2.6, 4) }));
   } else if (V.kind === 'play') {
@@ -161,7 +157,7 @@ function updateVenue(V, dt) {
     else if (V.t < 2.9) { const t = V.t - 2.2; V.ball.position.set(h.x + (V.made ? 0 : t * 1.5), h.y - t * 4.2, h.z + (V.made ? 0 : t)); V.ball.position.y = Math.max(V.ball.position.y, groundY(h.x, h.z) + 0.12); }
     else { V.t = 0; V.made = undefined; V.who = (V.who + 1) % V.shooters.length; }
     V.ball.rotation.x += dt * 8;
-  } else if (V.kind === 'skate') for (const s of V.skaters) { const L = V.lim; s.u = s.u ?? R(-L, L); s.u += s.dir * s.sp * dt; if (Math.abs(s.u) > L) { s.dir *= -1; s.u = Math.sign(s.u) * L; } const [x, z] = local(V, s.u, s.v ?? (s.v = R(-V.W / 3, V.W / 3))); s.x = x; s.z = z; s.hop = Math.max(0, (s.hop || 0) - dt); if (!s.hop && Math.random() < dt * 0.4) s.hop = 0.5; s.y = groundY(x, z) + 0.14 + (s.hop ? Math.sin((0.5 - s.hop) / 0.5 * Math.PI) * 0.6 : 0); s.yaw = Math.atan2(-(V.ux * s.dir), -(V.uz * s.dir)) + 1.2; s.kind = 'board'; s.amp = 0; }
+  } else if (V.kind === 'skate') for (const s of V.skaters) skaterStep(V, s, dt);
   else if (V.kind === 'track') for (const r of V.runners) { r.ang += dt * r.sp / (V.L * 0.4); const [x, z] = local(V, Math.cos(r.ang) * V.L * 0.42, Math.sin(r.ang) * V.W * 0.4); stepTo(r, x, z, r.sp * 1.4, dt); r.amp = 0.95; }
   else if (V.kind === 'play') for (const k of V.kids) { k.tt -= dt; if (k.tt < 0) { k.tt = R(1, 4); [k.tx, k.tz] = local(V, R(-V.L / 3, V.L / 3), R(-V.W / 3, V.W / 3)); } stepTo(k, k.tx, k.tz, 3.2, dt); }
   else if (V.kind === 'golf' || V.kind === 'putt') for (const g of V.golfers) { g.t += dt; const c = g.t % 9; if (c < 1.6) { g.kind = 'swing'; g.swing = Math.min(1, c / 1.2); } else { g.kind = 'walk'; g.amp = 0; } }
@@ -264,7 +260,7 @@ const GAMES = {};
 function begin(kind, V, opts = {}) {
   const def = GAMES[kind]; if (!def) return;
   if (activeMission()) { ui.toast('Busy!', 'Finish your mission first.', 1500); return; }
-  game = { kind, V, def, phase: 'intro', t: 0, ...opts }; pl.noJump = true; pl.freeze = !!def.freeze; pl.vx = pl.vz = 0;
+  game = { kind, V, def, phase: 'intro', t: 0, ...opts, opts }; pl.noJump = true; pl.freeze = !!def.freeze; pl.vx = pl.vz = 0;
   def.setup?.(game);
 }
 function endGame(msg, sub) {
@@ -290,7 +286,7 @@ function updateGame(dt) {
   if (g.phase === 'over') {
     showCard(`<b style="font-size:19px;color:${g.res.win ? '#9ae6b4' : '#ffd45c'}">${g.res.title}</b><br>${g.res.sub}<br><span style="color:#9ae6b4">${K('E')} play again · ${K('Esc')} done</span>`);
     def.aim?.(g, dt);
-    if (tapped('KeyE')) { const { kind, V } = g; def.cleanup?.(g); clearExtras(); game = null; begin(kind, V); if (game) { game.phase = 'play'; game.def.start?.(game); } }
+    if (tapped('KeyE')) { const { kind, V, opts } = g; def.cleanup?.(g); clearExtras(); game = null; begin(kind, V, opts); if (game) { game.phase = 'play'; game.def.start?.(game); } }
     return;
   }
   if (g.lock) { if (key('Space')) { showCard(def.card(g)); return; } g.lock = false; }   // the Space that started the game isn't a shot
@@ -616,9 +612,13 @@ GAMES.pens = {
 };
 
 // ---------- prompts, init, update ----------
-export function initActivities(player) { pl = player; crowd = new Crowd(CAP); }
+// helpers shared with golf.js (the real pitch & putt courses register their game here)
+const HELP = { K, meter, showAim, aimCam, ballMesh, addExtra, gearOnPlayer, club: () => club, ring, ringOff() { if (ringM) { ringM.visible = false; ringM.scale.setScalar(1); } }, finish, begin, endGame, obb, boxDist, discover, current: () => game, register(name, def) { GAMES[name] = def; } };
+export function initActivities(player) { pl = player; crowd = new Crowd(CAP); initGolf(player, HELP); initSkateparks(player, discover); }
 export function activityPrompt(player) {
+  if (!game && !player.transit) { const sp = skatePrompt(player); if (sp) return sp; }   // works on the board too
   if (game || player.vehicle || player.transit || G.dialogOpen) return '';
+  { const gp = golfPrompt(player); if (gp) return gp; }
   let best = null, bd = 1e9;
   for (const V of venues) {   // the venue you're standing in (or right next to); the smallest wins when they overlap
     const d = boxDist(V, player.x, player.z); if (d > 2.5) continue;
@@ -650,6 +650,7 @@ export function updateActivities(dt, player) {
     if (V.kind === 'soccer') { V.ball.visible = true; updateSoccer(V, dt, daylight || game?.V === V); continue; }   // the ball is always there to kick, even at night
     if (V.ball) V.ball.visible = on; if (on) updateVenue(V, dt);
   }
+  updateGolf(dt, player); updateSkateparks(dt);
   if (game) updateGame(dt);
   crowd.draw(people);
   drawItems();

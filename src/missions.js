@@ -19,6 +19,7 @@ import { dtesPrompt, dtes, startOverdose } from './dtes.js';
 import { snowFunPrompt } from './snowfun.js';
 import { slopesPrompt } from './slopes.js';
 import { activityPrompt } from './activities.js';
+import { qePrompt } from './qepark.js';
 import { trailsPrompt } from './trails.js';
 import { minigamePrompt } from './minigames.js';
 import { boatPrompt } from './boats.js';
@@ -868,6 +869,14 @@ export const SECRETS = [
   ['trashking', 'Trash Panda King', 'You scored 1,000 in Raccoon Run.'],
   ['holeinone', 'Hole in One!', 'You aced a hole at a real pitch & putt.'],
   ['pitchputt', 'Weekend Golfer', 'You played a full round of pitch & putt.'],
+  ['golfcrow', 'Fowl Play', 'A crow stole your golf ball mid-round. Local rules: play it where it drops.'],
+  ['golfgoose', 'Goose Hazard', 'Your ball bounced off a Canada goose on the green. It has not forgiven you.'],
+  ['quarrygarden', 'Rock Bottom', 'You went down into the Quarry Garden at Queen Elizabeth Park: an old basalt quarry turned into a sunken garden with a waterfall.'],
+  ['qeview', 'Top of the City', 'You looked through the coin binoculars on Little Mountain, the highest point in Vancouver.'],
+  ['grind', 'Grind Time', 'You grinded a rail or ledge at a skatepark.'],
+  ['skatejam', 'Sponsored', 'You scored 4,000+ points in a 60-second Trick Jam at a skatepark.'],
+  ['skategame', 'S.K.A.T.E. Champ', 'You beat a local skater at a game of S.K.A.T.E.'],
+  ['photobomb', 'Photobomb!', 'You walked into a wedding photo shoot in the Quarry Garden. You are in their album forever.'],
   ['lawnbowls', 'Bowled Over', 'You beat a club member at lawn bowls.'],
   ['pingpong', 'Ping Pong Wizard', 'You won a game of park ping pong.'],
   ['bowling', 'Strike a Pose', 'You beat a league regular at the bowling alley.'],
@@ -1020,6 +1029,7 @@ export function updateMissions(dt) {
   if (!prompt) prompt = transitPrompt(player);
   if (!prompt) prompt = faunaPrompt(player);   // wildlife: make noise at a bear, watch an animal, eat ripe berries (fauna.js / flora.js)
   if (!prompt) prompt = minigamePrompt(player);   // before shops: the pub chalkboards sit right outside pubs that sell pints
+  if (!prompt) prompt = qePrompt(player);   // Queen Elizabeth Park coin binoculars
   if (!prompt) prompt = activityPrompt(player);   // sports courts/fields too: a café 14 m away used to hide "play tennis"
   if (!prompt) prompt = shopPrompt(player);
   if (!prompt) prompt = dtesPrompt(player);

@@ -278,7 +278,7 @@ export function updatePlayer(dt) {
       player.flying = (pv.d.kind === 'heli' || pv.d.kind === 'plane') && pv.y - surfaceY(pv.x, pv.z, pv.y) > 3;
       if (pv.d.show) {
         const st = player.model.st; st.kind = pv.d.seat; st.phase += dt * pv.speedAbs * (pv.d.pedal ? 1.6 : 0); st.amp = 0;
-        player.model.grp.position.set(pv.x, pv.y + (pv.d.sitY ?? (pv.type === 'scooter' ? 0.2 : pv.type === 'jetski' ? 0.45 : 0.55)), pv.z); player.model.grp.rotation.set(pv.pitch + (pv.air ? pv.air.flip : 0), pv.yaw, pv.roll, 'YXZ');
+        player.model.grp.position.set(pv.x, pv.y + (pv.d.sitY ?? (pv.type === 'scooter' ? 0.2 : pv.type === 'jetski' ? 0.45 : 0.55)), pv.z); player.model.grp.rotation.set(pv.pitch + (pv.air && pv.type !== 'skate' ? pv.air.flip : 0), pv.yaw, pv.roll, 'YXZ');   // skateboard flips spin only the board (kickflips), the rider stays up
         player.model.pose(dt);
       }
     }

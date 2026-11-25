@@ -26,7 +26,7 @@ import { journalHtml, journalSave, journalLoad } from './journal.js';
 import { updateSocial } from './social.js';
 import { initStorefronts, updateStorefronts } from './storefronts.js';
 import { initDetails, updateDetails, artCamera } from './details.js';
-import { initQEPark, updateQEPark } from './qepark.js';
+import { initQEPark, updateQEPark, qeCamera } from './qepark.js';
 import { initSkyline, updateSkyline } from './skyline.js';
 import { updateTreeSeason } from './treeseason.js';
 import { initBeaches, updateBeaches } from './beaches.js';
@@ -40,6 +40,7 @@ import { initSkiers, updateSkiers } from './skiers.js';
 import { initStreetLife, updateStreetLife } from './streetlife.js';
 import { initBeachLife, updateBeachLife } from './beachlife.js';
 import { initActivities, updateActivities } from './activities.js';
+import { golfMarkers } from './golf.js';
 import { initMinigames, updateMinigames, minigameMarkers, minigameOpen, updateMinigame, mgSave, mgLoad } from './minigames.js';
 import { updateHouseDetail } from './housedetail.js';
 import { updateSeaLife } from './sealife.js';
@@ -362,7 +363,7 @@ function loop(now, manual) {
     updateSocial(dt, player);
   __mark('updateSocial(dt, playe');
   }
-  updateCamera(dt); artCamera(camera, dt); rideCamera(camera, dt);
+  updateCamera(dt); artCamera(camera, dt); rideCamera(camera, dt); qeCamera(camera, dt);
   __mark('updateCamera(dt);');
   updateSky(player); updateCityNight(); updateWater(dt); updateBuildingTiles(player.x, player.z);
   __mark('updateSky(player); upd');
@@ -374,7 +375,7 @@ function loop(now, manual) {
   __mark('updateBubbles(animals.');
   updateHud(player, placeName());
   __mark('updateHud(player, plac');
-  drawMinimap(player, missionMarkers().concat(shopMarkers(), minigameMarkers(), charterMarkers(), snowMarkers(), ...slopeMarkers(), dtesMarkers(), rampMarkers().filter(r => Math.hypot(r.x - player.x, r.z - player.z) < 900), transitStops().map(s => ({ x: s.x, z: s.z, icon: s.kind === 'boat' ? '⛴️' : s.kind === 'bus' ? '🚌' : '🚆' })), vehicles.filter(v => v.keep && !v.driver && ['heli', 'seaplane', 'jetski', 'kayak', 'sailboat', 'speedboat', 'yacht'].includes(v.type)).map(v => ({ x: v.x, z: v.z, icon: { heli: '🚁', seaplane: '🛩️', kayak: '🛶', sailboat: '⛵', yacht: '🛥️' }[v.type] || '🚤' }))));
+  drawMinimap(player, missionMarkers().concat(shopMarkers(), minigameMarkers(), golfMarkers(), charterMarkers(), snowMarkers(), ...slopeMarkers(), dtesMarkers(), rampMarkers().filter(r => Math.hypot(r.x - player.x, r.z - player.z) < 900), transitStops().map(s => ({ x: s.x, z: s.z, icon: s.kind === 'boat' ? '⛴️' : s.kind === 'bus' ? '🚌' : '🚆' })), vehicles.filter(v => v.keep && !v.driver && ['heli', 'seaplane', 'jetski', 'kayak', 'sailboat', 'speedboat', 'yacht'].includes(v.type)).map(v => ({ x: v.x, z: v.z, icon: { heli: '🚁', seaplane: '🛩️', kayak: '🛶', sailboat: '⛵', yacht: '🛥️' }[v.type] || '🚤' }))));
   __mark('drawMinimap(player, mi');
   window.__camHold?.();   // test hook: a still camera for screenshots
   G.camHigh = camera.position.y - heightAt(camera.position.x, camera.position.z);

@@ -10,6 +10,8 @@ import { ui } from './ui.js';
 import { sfx } from './sound.js';
 
 export const trickStats = { best: 0, total: 0, combo: 0 };
+// listeners get every landed trick ({ names, pts, t, spins, flips, tag, sk }) and every bail ({ bail: true }) — skateparks use it
+export const trickHooks = [];
 let discoverFn = null; export function setDiscover(fn) { discoverFn = fn; }
 // call when leaving the ground
 export function takeoff(o, x, z) { o.air = { t: 0, spin: 0, flip: 0, x, z, lastYaw: o.yaw ?? 0 }; }
@@ -33,17 +35,20 @@ export function land(o, x, z, kind, pl) {
   const dist = Math.hypot(x - a.x, z - a.z);
   if (a.t < 0.45) return null;   // a tiny hop over a bump or curb never throws you off
   // only a genuinely bad landing bails: more than ~60° sideways, or landing on your back/face (> ~65° off a flip)
-  if (flipOff > 1.15 || spinOff > 1.05) { ui.toast('💥 BAIL!', pick(['Ate it. Hard.', 'That looked expensive.', 'The crowd goes "ooooh".', 'Your mom would not approve.']), 2000); sfx.bump?.(); trickStats.combo = 0; return 'bail'; }
+  const sk = pl?.vehicle?.type === 'skate';
+  if (flipOff > 1.15 || spinOff > 1.05) { for (const f of trickHooks) f({ bail: true, sk }); ui.toast('💥 BAIL!', pick(['Ate it. Hard.', 'That looked expensive.', 'The crowd goes "ooooh".', 'Your mom would not approve.']), 2000); sfx.bump?.(); trickStats.combo = 0; return 'bail'; }
   const names = [];
   if (spins >= 0.5) names.push(spins === 0.5 ? '180' : (spins * 360) + '');
-  if (flips) names.push((flips > 1 ? flips + 'x ' : '') + (a.flip < 0 ? 'Backflip' : 'Frontflip'));
+  if (flips) names.push(sk ? (flips > 1 ? ['', '', 'Double ', 'Triple '][Math.min(3, flips)] || flips + 'x ' : '') + (a.flip < 0 ? 'Kickflip' : 'Heelflip') : (flips > 1 ? flips + 'x ' : '') + (a.flip < 0 ? 'Backflip' : 'Frontflip'));
+  if (a.tag) names.unshift(a.tag);
   const big = kind === 'car' ? a.t > 0.6 || dist > 15 : a.t > 1.1;
   if (!names.length && !big) return null;
-  const pts = Math.round(spins * 40 + flips * 120 + a.t * 30 + dist * 2);
+  const pts = Math.round(spins * 40 + flips * (sk ? 90 : 120) + a.t * 30 + dist * 2 + (a.bonus || 0));
   if (!names.length) names.push(kind === 'car' ? 'Stunt jump' : 'Big air');
   trickStats.combo++; const mult = Math.min(4, trickStats.combo);
   const cash = Math.round(pts / 10) * mult;
   pl.money += cash; trickStats.total += pts * mult; trickStats.best = Math.max(trickStats.best, pts * mult); pl.stats.tricks = (pl.stats.tricks || 0) + 1;
+  for (const f of trickHooks) f({ names, pts: pts * mult, t: a.t, spins, flips, tag: a.tag, sk, flipDir: Math.sign(a.flip) });
   ui.toast(`🤘 ${names.join(' + ')}!`, `${a.t.toFixed(1)} s air · ${Math.round(dist)} m${mult > 1 ? ` · combo x${mult}` : ''} · +$${cash}`, 2600); sfx.coin?.();
   if (kind === 'car' && (a.t > 1.2 || dist > 25)) discoverFn?.('stuntjump');
   if (flips >= 1 && kind !== 'car') discoverFn?.('flip');

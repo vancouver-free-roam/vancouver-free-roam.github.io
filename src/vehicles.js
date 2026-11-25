@@ -561,7 +561,7 @@ export function makeVehicle(type, x, z, yaw = 0, opts = {}) {
   syncModel(v); vehicles.push(v); return v;
 }
 export function removeVehicle(v) { scene.remove(v.g); const i = vehicles.indexOf(v); if (i >= 0) vehicles.splice(i, 1); }
-function syncModel(v) { v.g.position.set(v.x, v.y, v.z); v.g.rotation.set(v.pitch + (v.vp || 0) + (v.air ? v.air.flip : 0), v.yaw, v.roll, 'YXZ'); }
+function syncModel(v) { const sk = v.type === 'skate'; v.g.position.set(v.x, v.y, v.z); v.g.rotation.set(v.pitch + (v.vp || 0) + (v.air && !sk ? v.air.flip : 0), v.yaw, v.roll + (v.air && sk ? v.air.flip : 0), 'YXZ'); }   // skateboards flip around their long axis (kickflip)
 function skateModel(color) { const g = new THREE.Group(); addMesh(new THREE.BoxGeometry(0.24, 0.03, 0.82), std(color || '#1a1a1a'), 0, 0.12, 0, g); addMesh(new THREE.BoxGeometry(0.22, 0.005, 0.8), std('#f6c343'), 0, 0.137, 0, g, false); for (const z of [-0.28, 0.28]) { addMesh(new THREE.BoxGeometry(0.2, 0.03, 0.05), std('#b0b4b8', { metalness: 0.7 }), 0, 0.09, z, g); for (const x of [-0.1, 0.1]) addMesh(new THREE.CylinderGeometry(0.035, 0.035, 0.035, 10).rotateZ(Math.PI / 2), std('#f4f4ef'), x, 0.04, z, g); } return { g, wheels: [] }; }
 
 // ---------- player driving physics ----------
@@ -628,7 +628,7 @@ export function drivePlayer(v, dt, input) {
     if (two && input.hop && v.y <= s + 0.3) { v.vy = (d.hop || (v.type === 'motorbike' ? 7.5 : 6.5)) * (1 + 0.75 * Math.min(1, input.hop)); v.y = s + 0.35; sfx.bump?.(); if (input.hop > 0.85) input.onBigHop?.(); }
     if (v.y > s + (v.air || v.vy > 1.5 ? 0.3 : 0.6)) {   // small drops (curbs, dips) keep the wheels on the ground
       if (!v.air) { takeoff(v, v.x, v.z); if (two && input.jump && v.vy > 1) v.vy *= 1.35; }   // holding Space off a ramp lip = extra pop
-      if (two) airControl(v, dt, input.steer, (input.down ? 1 : 0) - (input.up ? 1 : 0));   // A/D spin, W/S flip
+      if (two) airControl(v, dt, input.steer, (input.down ? 1 : 0) - (input.up ? 1 : 0), 7, v.type === 'skate' ? 12 : 6.5);   // board flips spin fast   // A/D spin, W/S flip
       v.vy -= (two ? (input.jump && v.vy < 4 ? 11 : 14.5) : 17) * dt; v.y += v.vy * dt;   // floaty hang time (more while holding Space)
       if (v.y <= s) { v.y = s; if (v.vy < -8) sfx.bump(); v.vy = 0; const r = land(v, v.x, v.z, two ? 'bike' : 'car', input.player); if (r === 'bail' && two) input.onBail?.(); }
     } else {

@@ -7,7 +7,7 @@
 //  - at night, raccoon families out on their rounds (and a coyote, if you're lucky)
 import * as THREE from 'three';
 import { G, scene, hash2, inPoly, R } from './core.js';
-import { heightAt, isWater, waterLevel, maskAt, TREE_MATS, FOLIAGE } from './terrain.js';
+import { heightAt, isWater, waterLevel, maskAt, TREE_MATS, FOLIAGE, isClearZone } from './terrain.js';
 import { shrubGeo, detailMat, DETAIL } from './trees.js';
 import { surfaceY, buildingAt, nearestRoad } from './city.js';
 import { setColliders } from './colliders.js';
@@ -93,7 +93,7 @@ function buildChunk(ci, cj) {
           const k = j * GW + i, dw = D[k] * cs; if (dw > 26 || dw < 7) continue;
           const r = ROWS.findIndex(R => Math.abs(dw - R) < 0.9); if (r < 0) continue;
           if (placed[r].some(([px, pz]) => Math.hypot(px - x, pz - z) < 10.5)) continue;
-          if (hash2(x * 0.31, z * 0.57) < 0.12 || !inPoly(x, z, a.p) || roadNear(x, z, 2) || buildingAt(x, z)) continue;
+          if (hash2(x * 0.31, z * 0.57) < 0.12 || !inPoly(x, z, a.p) || roadNear(x, z, 2) || buildingAt(x, z) || isClearZone(x, z)) continue;
           const gxd = D[k + 1] - D[k - 1], gzd = D[k + GW] - D[k - GW], gl = Math.hypot(gxd, gzd); if (gl < 0.3) continue;   // shore normal from the distance map
           const tx = -gzd / gl, tz = gxd / gl;
           placed[r].push([x, z]);
@@ -109,7 +109,7 @@ function buildChunk(ci, cj) {
           const x = a.p[i] + ex * s / Le, z = a.p[i + 1] + ez * s / Le; if (x < x0 || x >= x0 + CH || z < z0 || z >= z0 + CH) continue;
           if (hash2(x * 0.3, z * 0.3) > 0.4) continue;
           const nx = -ez / Le, nz = ex / Le, o2 = inPoly(x + nx * 3, z + nz * 3, a.p) ? 3 : -3, bx = x + nx * o2, bz = z + nz * o2;
-          if (!roadNear(bx, bz, 1) && !buildingAt(bx, bz) && !isWater(bx, bz) && !(areaBy.get(k) || []).some(r => r.a.k === 'beach' && inPoly(bx, bz, r.a.p))) B.push([bx, bz, 0.7 + hash2(bx, bz) * 0.9]);   // no park-edge bushes out on the beach sand
+          if (!roadNear(bx, bz, 1) && !buildingAt(bx, bz) && !isWater(bx, bz) && !isClearZone(bx, bz) && !(areaBy.get(k) || []).some(r => r.a.k === 'beach' && inPoly(bx, bz, r.a.p))) B.push([bx, bz, 0.7 + hash2(bx, bz) * 0.9]);   // no park-edge bushes out on the beach sand
         }
       }
     }

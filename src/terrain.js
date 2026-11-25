@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { G, scene, renderer, camera, inPoly, clamp, smooth, vnoise, hash2, toXZ, canvasTex, depthBias, SKY_LOOK } from './core.js';
 import { SPECIES_GEO, makeFoliageMat, NearRing, FOL, fernGeo, shrubGeo, logGeo, stumpGeo } from './trees.js';
+import { PARKDATA } from './parkdata.js';
 
 // ---------- elevation data ----------
 const decode = D => { const s = atob(D.b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); D.arr = new Int16Array(u.buffer); return D; };
@@ -13,7 +14,25 @@ function sampleDem(D, x, z) {
   const tx = fx - i, tz = fz - j, k = j * D.w + i, A = D.arr;
   return ((A[k] * (1 - tx) + A[k + 1] * tx) * (1 - tz) + (A[k + D.w] * (1 - tx) + A[k + D.w + 1] * tx) * tz) * D.scale;
 }
-function demH(x, z) { return sampleDem(D, x, z) ?? (D4 && sampleDem(D4, x, z)) ?? sampleDem(D2, x, z) ?? (D3 && sampleDem(D3, x, z)) ?? -20; }
+function demRaw(x, z) { return sampleDem(D, x, z) ?? (D4 && sampleDem(D4, x, z)) ?? sampleDem(D2, x, z) ?? (D3 && sampleDem(D3, x, z)) ?? -20; }
+// Queen Elizabeth Park's two quarry gardens are old basalt quarries, sunk into Little Mountain. The 20 m survey data smooths
+// them away, so dig them back in: inside each OSM garden outline the ground drops to a floor below the lowest rim point
+// (cliff faces + plants are added by qepark.js). QUARRIES is shared with qepark.js.
+export const QUARRIES = PARKDATA.qe.quarry.map(q => {
+  const p = q.p; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + 1]); z1 = Math.max(z1, p[i + 1]); }
+  return { n: q.n, p, x0, x1, z0, z1, depth: /Large/.test(q.n) ? 10 : 6.5, edge: /Large/.test(q.n) ? 8 : 6.5, floor: null };
+});
+function edgeDist(p, x, z) { let d = 1e9; for (let i = 0; i < p.length; i += 2) { const j = (i + 2) % p.length, ax = p[i], az = p[i + 1], bx = p[j] - ax, bz = p[j + 1] - az, L = bx * bx + bz * bz || 1, t = clamp(((x - ax) * bx + (z - az) * bz) / L, 0, 1); d = Math.min(d, Math.hypot(x - ax - bx * t, z - az - bz * t)); } return d; }
+function demH(x, z) {
+  let h = demRaw(x, z);
+  for (const Q of QUARRIES) {
+    if (x < Q.x0 || x > Q.x1 || z < Q.z0 || z > Q.z1 || !inPoly(x, z, Q.p)) continue;
+    if (Q.floor === null) { let m = 1e9; const p = Q.p; for (let i = 0; i < p.length; i += 2) { const j = (i + 2) % p.length; for (let t = 0; t < 1; t += 0.2) m = Math.min(m, demRaw(p[i] + (p[j] - p[i]) * t, p[i + 1] + (p[j + 1] - p[i + 1]) * t)); } Q.floor = m - Q.depth; }
+    const s = smooth(0, Q.edge, edgeDist(Q.p, x, z)), fl = Q.floor + (vnoise(x * 0.08, z * 0.08) - 0.5) * 1.2;
+    h = h + (Math.min(h, fl) - h) * s;
+  }
+  return h;
+}
 export const DEM_RECT = { x0: D.x0, z0: D.z0, x1: D.x0 + (D.w - 1) * D.step, z1: D.z0 + (D.h - 1) * D.step };
 export const DEM2_RECT = { x0: D2.x0, z0: D2.z0, x1: D2.x0 + (D2.w - 1) * D2.step, z1: D2.z0 + (D2.h - 1) * D2.step };
 export const DEM3_RECT = D3 ? { x0: D3.x0, z0: D3.z0, x1: D3.x0 + (D3.w - 1) * D3.step, z1: D3.z0 + (D3.h - 1) * D3.step } : { x0: 0, z0: 0, x1: 0, z1: 0 };
@@ -690,6 +709,8 @@ export function prebuildChunksNear(px, pz) {
 // ---------- forests that grow in around you (whole region outside the city) ----------
 let roadFilter = () => true;
 export function setForestFilter(fn) { roadFilter = fn; }
+// spots plants and bushes must keep clear of (golf greens, tees and fairways…): modules push (x, z) => true-if-blocked
+export const clearZones = []; export const isClearZone = (x, z) => { for (const f of clearZones) if (f(x, z)) return true; return false; };
 let pisteFilter = () => true;   // ski runs are cleared of trees (pistes.js)
 export function setPisteFilter(fn) { pisteFilter = fn; for (const m of forestCells.values()) dropCell(m); forestCells.clear(); }
 const forestCells = new Map(), FC = 1000;
