@@ -59,6 +59,7 @@ import { initPaint, updatePaint } from './paint.js';
 import { renderWorld, updateCumulus } from './post.js';
 import { initRamps, rampMarkers, setDiscover } from './moves.js';
 import { discover as discoverSecret } from './missions.js';
+import { initGuns, updateGuns, gunCamera, gunMarkers, gunsLoad } from './guns.js';
 import { initIsland, updateIsland, onIsland } from './island.js';
 import { isInside, enterHome, exitHome, updateInterior, renderInterior, homeName } from './interiors.js';
 import { initShops, shopMarkers, shopSave, shopLoad, OWN, OUTFITS, RIDES, PROPS, rentPerDay, callRide, goHome, wear, startGig, cancelGig, gigActive, gigText } from './shops.js';
@@ -80,7 +81,7 @@ async function load() {
   await progress('Building 38,000 real buildings and 32,000 streets… (this takes a moment)', 0.3);
   initCity((m, f) => { steps.push([m, f]); });
   await progress('Building landmarks…', 0.82);
-  buildLandmarks(); initSkyline(); initBeaches(); initDistricts(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initGarage(player, discoverSecret); initPaint(player, discoverSecret); initCityEvents(discoverSecret); initAdverts();
+  buildLandmarks(); initSkyline(); initBeaches(); initDistricts(); initLifts(); initPeople(); initAnimals(); placeFixedVehicles(); buildAirport(); initTransit(); initShops(); initStorefronts(); initDetails(); initQEPark(); initSnowFun(player); initPistes(); initTrails(player); initSlopes(player); initSkiers(); initStreetLife(); initBeachLife(); initActivities(player); initMinigames(player); initIsland(); initShips(); initBoats(); initAirTraffic(); initRichmond(); initDtes(); initRamps(); setDiscover(discoverSecret); initSeasons(); initWeather(); initCityLife(player, discoverSecret); initGarage(player, discoverSecret); initPaint(player, discoverSecret); initCityEvents(discoverSecret); initAdverts(); initGuns(player);
   await progress('Drawing the maps…', 0.9);
   buildMaps();
   await progress('Ready!', 1);
@@ -117,7 +118,7 @@ function start(c, save = null) {
     if (typeof save.hour === 'number') G.hour = save.hour;
     player.teleport(save.x, save.z); refreshMarkers();
   } else clearSave();
-  shopLoad(save?.shop); mgLoad(save?.mg); journalLoad(save?.jr);
+  shopLoad(save?.shop); gunsLoad(); mgLoad(save?.mg); journalLoad(save?.jr);
   prebuildChunksNear(player.x, player.z);
   G.preview = false; G.paused = false;
   $('who').textContent = c.face + ' ' + c.name;
@@ -230,6 +231,7 @@ function openPhone(tab = phoneTab) {
       <p><b>People:</b> locals notice you and wave, and they comment on your outfit, the weather or your ride (fans even recognise Dex and Mei). Walk up to anyone and press <kbd>E</kbd> to chat: ask for directions or a food tip (it goes on your map), ask for spare change, compliment them… or roast them (-1 karma). Don't run into people. And don't stand <i>too</i> close.</p>
       <p><b>Buses:</b> find a bus shelter (🚌 on the minimap) and press <kbd>E</kbd>. Routes: 99 B-Line along Broadway to UBC, R4 along 41st Ave, R5 along Hastings to SFU, R2 along Marine Drive, 5 Robson, 250 to Horseshoe Bay and 232 up to Grouse Mountain. Buses drive at real speed: <kbd>Space</kbd> = fast-forward, <kbd>Space</kbd> again = skip to your stop.</p>
       <p><b>Seasons:</b> spring 🌸, summer ☀️, fall 🍂 and winter ❄️ change every 2 game days (or pick one in the phone's <b>World</b> tab, where you can also set the weather and time of day). Winter means snow in the city and short days; summer means long days and fireworks.</p>
+      <p><b>Guns:</b> Cabbagela's Outdoors + the Shoot the Breeze Range (🎯 on the map, South Vancouver) sell rifles, shotguns, paintball and tranquilliser guns (rifles/shotguns need the PAL safety course), and the range rents a pistol. <kbd>O</kbd> draw/holster · <kbd>1</kbd>-<kbd>6</kbd> pick a gun · mouse aim · click shoot · right mouse aim down sights / scope · <kbd>R</kbd> reload. Shoot targets, clays, street junk, Playland zombies, or hunt legally (licence + tag + season). Guns never work on people. A few guns are hidden around town…</p>
       <p><b>Weather:</b> Vancouver weather changes by itself: mostly sun and puffy clouds, sometimes grey skies, drizzle, rain, fog and the odd thunderstorm (rain turns to snow up the mountains). Roads get slippery in the rain. <kbd>U</kbd> opens your umbrella · <kbd>Y</kbd> = weather machine (change the weather) · watch for rainbows after the rain!</p>
       <p>🎨 <b>Street art &amp; city life:</b> press <kbd>I</kbd> facing a wall to spray-paint your own piece (draw with the mouse, stencils, tags, colours), or on open ground for sidewalk chalk. Your pieces stay in the city next time you play. Run into cones, bins, boxes and balls to kick them; press <kbd>E</kbd> to rummage in bins and dumpsters, read a newspaper box or stand up a dumped scooter. Watch for buskers, film shoots, food trucks, markets, parades and more popping up around you.</p>
       <p><b>Moves &amp; tricks:</b> hold <kbd>Shift</kbd> to run (keep running to sprint) · hold <kbd>Space</kbd> then let go for a super jump · <kbd>Space</kbd> in the air = flip (or a parachute when you're high up) · hold <kbd>Shift</kbd> when you land hard to roll · walk into a wall and hold <kbd>W</kbd> + <kbd>Space</kbd> to climb onto roofs · <kbd>X</kbd> dance · <kbd>B</kbd> skateboard (off the snow) · jump onto benches, rocks, statues, parked cars and even car or bus roofs. On bikes, scooters, skateboards, motorbikes, snowmobiles, skis and snowboards: hold <kbd>Space</kbd> to load up, let go to jump (longer hold = more air; holding Space off a ramp gives extra pop); in the air <kbd>A</kbd>/<kbd>D</kbd> spin and <kbd>W</kbd>/<kbd>S</kbd> flip. Let go of the keys and you straighten up for the landing; you only crash if you land badly sideways or upside down. Land tricks for cash (combos multiply!). Hit the 🛹 ramps in parks with any vehicle for stunt jumps.</p>
@@ -355,6 +357,7 @@ function loop(now, manual) {
     updateAnimals(dt, player);
   __mark('updateAnimals(dt, play');
     updateWildlife(dt, player);
+    updateGuns(dt, player);   // guns: aiming, shooting, range, hunting
   __mark('updateWildlife(dt, pla');
     updateLandmarks(dt);
   __mark('updateLandmarks(dt);');
@@ -363,7 +366,7 @@ function loop(now, manual) {
     updateSocial(dt, player);
   __mark('updateSocial(dt, playe');
   }
-  updateCamera(dt); artCamera(camera, dt); rideCamera(camera, dt); qeCamera(camera, dt);
+  updateCamera(dt); artCamera(camera, dt); rideCamera(camera, dt); qeCamera(camera, dt); gunCamera(camera, dt);
   __mark('updateCamera(dt);');
   updateSky(player); updateCityNight(); updateWater(dt); updateBuildingTiles(player.x, player.z);
   __mark('updateSky(player); upd');
@@ -375,7 +378,7 @@ function loop(now, manual) {
   __mark('updateBubbles(animals.');
   updateHud(player, placeName());
   __mark('updateHud(player, plac');
-  drawMinimap(player, missionMarkers().concat(shopMarkers(), minigameMarkers(), golfMarkers(), charterMarkers(), snowMarkers(), ...slopeMarkers(), dtesMarkers(), rampMarkers().filter(r => Math.hypot(r.x - player.x, r.z - player.z) < 900), transitStops().map(s => ({ x: s.x, z: s.z, icon: s.kind === 'boat' ? '⛴️' : s.kind === 'bus' ? '🚌' : '🚆' })), vehicles.filter(v => v.keep && !v.driver && ['heli', 'seaplane', 'jetski', 'kayak', 'sailboat', 'speedboat', 'yacht'].includes(v.type)).map(v => ({ x: v.x, z: v.z, icon: { heli: '🚁', seaplane: '🛩️', kayak: '🛶', sailboat: '⛵', yacht: '🛥️' }[v.type] || '🚤' }))));
+  drawMinimap(player, missionMarkers().concat(shopMarkers(), gunMarkers(), minigameMarkers(), golfMarkers(), charterMarkers(), snowMarkers(), ...slopeMarkers(), dtesMarkers(), rampMarkers().filter(r => Math.hypot(r.x - player.x, r.z - player.z) < 900), transitStops().map(s => ({ x: s.x, z: s.z, icon: s.kind === 'boat' ? '⛴️' : s.kind === 'bus' ? '🚌' : '🚆' })), vehicles.filter(v => v.keep && !v.driver && ['heli', 'seaplane', 'jetski', 'kayak', 'sailboat', 'speedboat', 'yacht'].includes(v.type)).map(v => ({ x: v.x, z: v.z, icon: { heli: '🚁', seaplane: '🛩️', kayak: '🛶', sailboat: '⛵', yacht: '🛥️' }[v.type] || '🚤' }))));
   __mark('drawMinimap(player, mi');
   window.__camHold?.();   // test hook: a still camera for screenshots
   G.camHigh = camera.position.y - heightAt(camera.position.x, camera.position.z);

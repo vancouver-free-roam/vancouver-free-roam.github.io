@@ -673,6 +673,7 @@ export function updateFauna(dt, pl) {
     if (a.resident && d > 450) continue;   // residents wait at home while you're far away
     if (!a.resident && !a.creek && (d > (a.S.small ? 140 : 340) && a.id !== 'crow')) { a.gone = true; continue; }
     a.t += dt;
+    if (a.down) { a.spd = 0; a.amp = 0; continue; }   // shot / tranquillised (guns.js): lies still
     switch (a.S.ai) {
       case 'bear': aiBear(a, dt, pl, d); break; case 'grazer': aiGrazer(a, dt, pl, d); break; case 'sentinel': aiSentinel(a, dt, pl, d); break;
       case 'cougar': aiCougar(a, dt, pl, d); break; case 'wolf': aiWolf(a, dt, pl, d); break; case 'porcupine': aiPorcupine(a, dt, pl, d); break; case 'skunk': aiSkunk(a, dt, pl, d); break;
@@ -768,7 +769,7 @@ let promptA = null;
 export function faunaPrompt(pl) {
   if (pl.vehicle || G.dialogOpen || pl.transit) return '';
   let best = null, bd = 1e9;
-  for (const a of live) { if (a.vis === false || a.cub || a.id === 'crow' || a.id === 'gull' || a.id === 'salmon') continue; const d = Math.hypot(a.x - pl.x, a.z - pl.z), r = a.kind === 'bear' ? (a.fence ? 10 : 32) : a.id === 'cougar' || a.id === 'wolf' ? 45 : a.id === 'moose' ? 25 : a.S.small ? 5 : 9; if (d < r && d < bd) { bd = d; best = a; } }
+  for (const a of live) { if (a.vis === false || a.down || a.cub || a.id === 'crow' || a.id === 'gull' || a.id === 'salmon') continue; const d = Math.hypot(a.x - pl.x, a.z - pl.z), r = a.kind === 'bear' ? (a.fence ? 10 : 32) : a.id === 'cougar' || a.id === 'wolf' ? 45 : a.id === 'moose' ? 25 : a.S.small ? 5 : 9; if (d < r && d < bd) { bd = d; best = a; } }
   for (const o of animals) { if (o.ext || !['goose', 'raccoon'].includes(o.kind)) continue; const d = Math.hypot(o.x - pl.x, o.z - pl.z); if (d < 5 && d < bd) { bd = d; best = o; } }
   promptA = best; if (!best) return floraPrompt(pl);
   const kind = best.kind, nm = best.S ? best.S.name : kind === 'goose' ? 'Canada goose' : 'raccoon';

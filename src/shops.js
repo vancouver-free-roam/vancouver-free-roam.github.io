@@ -13,8 +13,8 @@ import { activeMission, discover, setWaypoint } from './missions.js';
 import { enterHome } from './interiors.js';
 
 // everything the player owns (saved in the save game)
-export const OWN = { outfits: [], outfit: 'orig', rides: [], props: [], gear: [], spent: 0, gigs: 0 };
-const fresh = () => ({ outfits: [], outfit: 'orig', rides: [], props: [], gear: [], spent: 0, gigs: 0 });
+export const OWN = { outfits: [], outfit: 'orig', rides: [], props: [], gear: [], spent: 0, gigs: 0, arms: null };
+const fresh = () => ({ outfits: [], outfit: 'orig', rides: [], props: [], gear: [], spent: 0, gigs: 0, arms: null });   // arms = guns.js (guns, ammo, licences, tags)
 
 export const OUTFITS = [
   { id: 'orig', name: 'Your usual look', price: 0 },

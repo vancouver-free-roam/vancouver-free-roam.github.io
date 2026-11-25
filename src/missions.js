@@ -24,6 +24,7 @@ import { trailsPrompt } from './trails.js';
 import { minigamePrompt } from './minigames.js';
 import { boatPrompt } from './boats.js';
 import { faunaPrompt } from './fauna.js';
+import { gunPrompt } from './guns.js';
 import { parkedSpots } from './streetlife.js';
 import { shopPrompt, updateShops, gigText, gigActive, startGig, stopGig, OWN } from './shops.js';
 import { setWeather, W, splashStats } from './weather.js';
@@ -943,6 +944,21 @@ export const SECRETS = [
   ['chocolily', 'Chocolate Lily', 'You found a chocolate lily in a Garry oak meadow.'],
   ['ancientcedar', 'The Old One', 'You stood under a cedar that was already old when Captain Vancouver sailed by.'],
   ['fairyring', 'Fairy Ring', 'You found a perfect ring of red-and-white mushrooms. Don\'t step inside…'],
+  // guns.js: range, finds, hunting
+  ['gunrange', 'Shoot the Breeze', 'You fired your first shots at the range. Ear protection: recommended.'],
+  ['platerack', 'Plate Rack Dash', 'All six steel plates down in under 6 seconds.'],
+  ['bottlebash', 'Bottle Bash', 'You cleared the whole bottle table in 20 seconds.'],
+  ['claymaster', 'Clay Master', '8 or more clay pigeons out of 10. Pull!'],
+  ['goldenclay', 'Golden Clay', 'You smashed the rare golden clay pigeon.'],
+  ['bullseye', 'Marksman', '45+ out of 50 on the 25 m paper target.'],
+  ['goldengun', 'The Golden Goose', 'You found the gold-plated pistol hidden on Deadman\'s Island.'],
+  ['paintfind', 'Hollow Tree Paintball', 'Someone left a paintball marker inside Stanley Park\'s Hollow Tree.'],
+  ['hiddenrifle', 'Grandpa Walt\'s Rifle', 'You found an old hunting rifle in a blind near Lynn Headwaters.'],
+  ['trashbandit', 'Trash Bandit', 'A raccoon ran off with your bullseye target.'],
+  ['zombiehunter', 'Fright Nights Sharpshooter', '25 Playland zombies dropped with a gun.'],
+  ['pal', 'Licensed', 'You passed the firearms safety course and got your PAL.'],
+  ['firsthunt', 'Clean, Legal Harvest', 'A legal hunt: licence, tag, season, the right animal. Meat to the food bank.'],
+  ['collared', 'Wildlife Biologist', 'You darted an animal and fitted a research GPS collar.'],
 ];
 const SECRET_IDS = new Set(SECRETS.map(s => s[0]));
 export function discover(id) {
@@ -1027,6 +1043,7 @@ export function updateMissions(dt) {
   if (!prompt) prompt = boatPrompt(player);   // charter boats (within 9 m of a host; and on-board offers during a charter)
   if (!prompt) prompt = liftPrompt(player);
   if (!prompt) prompt = transitPrompt(player);
+  if (!prompt) prompt = gunPrompt(player);   // guns.js: downed animals, hidden finds, gun shop + range desk
   if (!prompt) prompt = faunaPrompt(player);   // wildlife: make noise at a bear, watch an animal, eat ripe berries (fauna.js / flora.js)
   if (!prompt) prompt = minigamePrompt(player);   // before shops: the pub chalkboards sit right outside pubs that sell pints
   if (!prompt) prompt = qePrompt(player);   // Queen Elizabeth Park coin binoculars

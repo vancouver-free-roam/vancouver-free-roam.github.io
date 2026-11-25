@@ -227,12 +227,13 @@ function moveOnFoot(dt) {
 
   // attack with the hockey stick
   player.attackT -= dt;
-  if (G.mouse.click && player.attackT <= 0 && !player.freeze) {   // (freeze = a sports mini-game: the click is a racket swing there)
+  if (G.mouse.click && player.attackT <= 0 && !player.freeze && !player.gunOut) {   // (gunOut = a gun is drawn: guns.js shoots instead)
+    // (freeze = a sports mini-game: the click is a racket swing there)
     player.attackT = 0.45; sfx.swing(); m.swing = 0;
     const hits = hitPedsInFront(player.x, player.z, player.yaw);
     if (hits) { sfx.thwack(); if (hits < 10) player.karma -= 1; }
   }
-  player.model.parts.stick.visible = (player.attackT > 0 || player.inZombieZone) && !player.freeze;
+  player.model.parts.stick.visible = (player.attackT > 0 || player.inZombieZone) && !player.freeze && !player.gunOut;
   if (player.attackT > 0) m.swing = 1 - player.attackT / 0.45;   // swing progress 0..1
 }
 
@@ -295,6 +296,7 @@ export function updatePlayer(dt) {
 // ---------- third-person camera (stops in front of buildings + trees) ----------
 const camTarget = new THREE.Vector3(), camPos = new THREE.Vector3(); let camSmoothY = 0;
 let lastMouse = 0, camFrac = 1, camMode = 0, fpHidden = false;
+export const camModeNow = () => camMode;   // guns.js: first-person aiming when C is on first person
 const CAM_MODES = ['🎥 Normal camera', '🔭 Far camera', '👀 First-person view', '🦅 Bird\'s-eye view'];
 const _dir = new THREE.Vector3();
 // tree crowns near the city, for camera collision (built once)
