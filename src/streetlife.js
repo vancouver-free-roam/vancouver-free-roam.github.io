@@ -6,8 +6,8 @@
 import * as THREE from 'three';
 import { G, scene, std, hash2 } from './core.js';
 import { groundY, isWater } from './terrain.js';
-import { roadGrid, NX, NZ, nodeEdges, roadName, buildingAt } from './city.js';
-import { parkedCarGeos, MODELS } from './vehicles.js';
+import { roadGrid, NX, NZ, nodeEdges, roadName, buildingAt, walkY } from './city.js';
+import { parkedCarGeos, MODELS, makeVehicle, vehicles, crashHooks } from './vehicles.js';
 import { setColliders, blockedAt } from './colliders.js';
 
 const M = window.MAP;
@@ -42,14 +42,28 @@ export const parkedSpots = [];   // {x, z, yaw, t, col, S, i} of every curbside 
 const taken = new Set();         // cars you've driven away from the curb (by place) stay gone
 let coll = [];
 const spotKey = (x, z) => Math.round(x) + ',' + Math.round(z);
+const stillLoose = k => { const v = loose.get(k); if (v && vehicles.includes(v)) return true; loose.delete(k); return false; };
 // F next to a curbside car: it becomes a real car you can drive (the parked copy disappears)
 export function takeParked(px, pz, r = 4) {
   let best = null, bd = r; for (const s of parkedSpots) { const d = Math.hypot(s.x - px, s.z - pz); if (d < bd) { bd = d; best = s; } }
   if (!best) return null;
-  o.position.set(0, -9999, 0); o.scale.set(0, 0, 0); o.updateMatrix(); best.S.paint.setMatrixAt(best.i, o.matrix); best.S.dark.setMatrixAt(best.i, o.matrix); best.S.paint.instanceMatrix.needsUpdate = best.S.dark.instanceMatrix.needsUpdate = true;
-  taken.add(spotKey(best.x, best.z)); parkedSpots.splice(parkedSpots.indexOf(best), 1);
-  coll = coll.filter(c => c.spot !== best); setColliders('parked', coll);
+  removeSpot(best); taken.add(spotKey(best.x, best.z));
   return best;
+}
+function removeSpot(best) {
+  o.position.set(0, -9999, 0); o.scale.set(0, 0, 0); o.updateMatrix(); best.S.paint.setMatrixAt(best.i, o.matrix); best.S.dark.setMatrixAt(best.i, o.matrix); best.S.paint.instanceMatrix.needsUpdate = best.S.dark.instanceMatrix.needsUpdate = true;
+  parkedSpots.splice(parkedSpots.indexOf(best), 1);
+  coll = coll.filter(c => c.spot !== best); setColliders('parked', coll);
+}
+// crash into a curbside car: the drawn copy is swapped for a real car right there, which the crash physics
+// (vehicles.js collidePair) then shoves, spins and rocks. It stays where it ends up until you're far away.
+const loose = new Map();   // spot key -> the real car standing in for it
+function hitParked(c) {
+  const s = c.spot; if (!parkedSpots.includes(s)) return;
+  removeSpot(s);
+  const v = makeVehicle(s.t, s.x, s.z, s.yaw, { color: s.col, y: walkY(s.x, s.z, groundY(s.x, s.z) + 0.5) });
+  v.ai = { parked: true, e: null }; v.fromCurb = true; loose.set(spotKey(s.x, s.z), v);
+  crashHooks.parked?.(v);
 }
 function rebuildParked(px, pz) {
   cx = px; cz = pz; parkedSpots.length = 0; for (const s of Object.values(sets)) s.n = 0;
@@ -70,7 +84,7 @@ function rebuildParked(px, pz) {
       for (let s = 14 + hash2(e.id, side) * 4; s < L - 14; s += 6.4) {
         if (hash2(e.id * 3 + side, Math.floor(s)) > fill) continue;
         const x = ax + ux * s - uz * off * side, z = az + uz * s + ux * off * side;
-        if (Math.hypot(x - px, z - pz) > PRAD || isWater(x, z) || buildingAt(x, z) || blockedAt(x, z, 2.3, 'parked') || taken.has(spotKey(x, z))) continue;   // not in front of hydrants, poles, trees
+        if (Math.hypot(x - px, z - pz) > PRAD || isWater(x, z) || buildingAt(x, z) || blockedAt(x, z, 2.3, 'parked') || taken.has(spotKey(x, z)) || stillLoose(spotKey(x, z))) continue;   // not in front of hydrants, poles, trees
         const t = typeAt(hash2(x * 0.7, z * 0.7)), S = sets[t]; if (S.n >= CAP) continue;
         const yaw = Math.atan2(-ux * side, -uz * side);   // parked facing the way traffic goes on that side
         const y = groundY(x, z) + 0.22;
@@ -78,7 +92,7 @@ function rebuildParked(px, pz) {
         const pal = MODELS[t].cols || COLS, paint = pal[Math.floor(hash2(z, x) * pal.length)];
         S.paint.setMatrixAt(S.n, o.matrix); S.dark.setMatrixAt(S.n, o.matrix); S.paint.setColorAt(S.n, col.set(paint));
         const spot = { x, z, yaw, t, col: paint, S, i: S.n }; S.n++;
-        for (const k of [-1, 0, 1]) coll.push({ x: x + ux * k * 1.5, z: z + uz * k * 1.5, r: 1.0, top: y + 1.5, spot });
+        for (const k of [-1, 0, 1]) coll.push({ x: x + ux * k * 1.5, z: z + uz * k * 1.5, r: 1.0, top: y + 1.5, spot, onHit: hitParked });
         parkedSpots.push(spot);
       }
     }

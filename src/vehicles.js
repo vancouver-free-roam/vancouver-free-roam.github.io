@@ -615,10 +615,10 @@ export function drivePlayer(v, dt, input) {
       if (collideBuildings(p, d.r, v.y)) { hit = true; v.x += p.x - ox; v.z += p.z - oz; }
     }
     for (const off of [0, d.len * 0.35, -d.len * 0.35]) {   // trees, poles, hydrants, benches, pillars…
-      const p = { x: v.x + fx * off, z: v.z + fz * off }, ox = p.x, oz = p.z;
+      const p = { x: v.x + fx * off, z: v.z + fz * off, kg: massOf(v) }, ox = p.x, oz = p.z;
       const sg = Math.sign(v.speed) || 1;
       if (collideStatic(p, d.r * 0.85, v.y + 0.3, Math.abs(v.speed), [fx * sg, fz * sg])) { hit = true; v.x += p.x - ox; v.z += p.z - oz; }
-      if (p.broke) { v.speed *= Math.pow(0.85, p.broke); p.broke = 0; }   // you smashed through something small
+      if (p.broke) { v.speed *= p.kg / (p.kg + p.brokeKg * 1.6); p.broke = 0; }   // you smashed through something small: a bus barely slows, a bike nearly stops
     }
     if (hit) { if (Math.abs(v.speed) > 6) { sfx.bump(); input.onCrash?.(Math.abs(v.speed)); } v.speed *= -0.25; v.vx *= 0.3; v.vz *= 0.3; }
     // ground / bridges / air
@@ -850,7 +850,7 @@ function aiPlace(v) {
   const a = v.ai, A = a.dir > 0 ? a.e.a : a.e.b, B = a.dir > 0 ? a.e.b : a.e.a;
   const ax = NX(A), az = NZ(A), dx = NX(B) - ax, dz = NZ(B) - az, L = a.e.len || 1, ux = dx / L, uz = dz / L;
   const tx = ax + ux * a.t - uz * a.side, tz = az + uz * a.t + ux * a.side;
-  v.x = tx; v.z = tz;
+  if (a.rejoin > 0) { const dt = G.dt || 0.016, f = Math.min(1, dt * 2.5); a.rejoin -= dt; v.x += (tx - v.x) * f; v.z += (tz - v.z) * f; } else { v.x = tx; v.z = tz; }   // after a crash: steer back into the lane
   const ty = Math.atan2(-ux, -uz); v.yaw = a.parked ? ty : v.yaw + wrapAngle(ty - v.yaw) * 0.25;
   const s = walkY(v.x, v.z, v.y - 1.0); v.y += (s - v.y) * 0.5;
 }
@@ -918,24 +918,129 @@ export function updateVehicles(dt, pl) {
     if (v.driver === 'player') { v.g.visible = true; continue; }
     // parked/fixed vehicles far away are not drawn (big planes and boats stay visible further)
     const vd = Math.abs(v.x - px) + Math.abs(v.z - pz); v.g.visible = vd < (v.d.kind === 'plane' || v.d.kind === 'water' || v.d.kind === 'heli' ? 3000 : 900) || !!v.script;
+    if (v.knock) { knockStep(v, dt); continue; }   // shoved / spun / tipped over (crash physics below)
     if (!v.g.visible && !v.ai) continue;
     if (v.ai) { aiDrive(v, dt, pl); if (v.model?.id === 'icecream') iceCreamJingle(v, pl); }
     else if ((v.d.kind === 'water' || v.d.kind === 'plane') && isWater(v.x, v.z) && v.y < waterLevel(v.x, v.z) + 1) { v.y = waterLevel(v.x, v.z) + 0.05 + Math.sin(G.t * 1.5 + v.id) * 0.05; syncModel(v); }
     else if (v.d.kind === 'heli' && v.rotorSpin > 0) { v.rotorSpin = Math.max(0, v.rotorSpin - dt * 0.2); v.rotor.rotation.y += dt * 40 * v.rotorSpin; }
   }
-  // player vehicle bumps others
+  // crashes: the player's ride vs every other vehicle, and shoved vehicles vs the ones they slide into (chain reactions)
   const pv = pl.vehicle;
-  if (pv && pv.d.kind === 'road') for (const o of vehicles) {
-    if (o === pv || o.d.kind !== 'road') continue;
-    const dx = o.x - pv.x, dz = o.z - pv.z, d = Math.hypot(dx, dz), min = (pv.d.r + o.d.r) * 1.4;
-    if (d < min && d > 0.01 && Math.abs(o.y - pv.y) < 2) {
-      // heavier wins: a bus barely notices a Miata, a Miata bounces off a bus; parked cars get shoved
-      const mp = pv.d.kg || 1400, mo = o.d.kg || 1400, share = mo / (mp + mo), push = (min - d) / d;
-      pv.x -= dx * push * share; pv.z -= dz * push * share;
-      if (!o.ai || o.ai.parked) { o.x += dx * push * (1 - share); o.z += dz * push * (1 - share); o.yaw += (Math.random() - 0.5) * 0.15 * (1 - share); syncModel(o); }
-      if (pv.speedAbs > 5) { sfx.bump(); pv.speed *= share > 0.5 ? -0.3 : Math.max(-0.3, 1 - share * 1.6); pl.onBump?.(o); }
+  if (pv && pv.d.kind === 'road' && !pv.air) for (const o of vehicles) if (o !== pv && o.d.kind === 'road') collidePair(pv, o, pl);
+  for (const o of vehicles) if (o.knock && o !== pv) for (const q of vehicles) if (q !== o && q !== pv && q.d.kind === 'road' && (!q.knock || q.id > o.id)) collidePair(o, q, null);
+  // on foot: sprinting into a parked bike or scooter knocks it over
+  if (!pv && dt > 0) {
+    const fvx = (px - (pl._lx ?? px)) / dt, fvz = (pz - (pl._lz ?? pz)) / dt, fs = Math.hypot(fvx, fvz);
+    if (fs > 3.5 && fs < 20) for (const o of vehicles) {
+      if (!o.d.show || o.d.kind !== 'road' || o.driver || (o.ai && !o.ai.parked) || Math.abs(o.roll) > 0.8 || Math.abs(o.x - px) > 2 || Math.abs(o.z - pz) > 2) continue;
+      if (Math.hypot(o.x - px, o.z - pz) < o.d.r + 0.5 && Math.abs(o.y - pl.y) < 1.5) { knock(o, fvx * 0.5, fvz * 0.5, R(-2, 2), fs); sfx.bump(); crashHooks.hit?.(null, o, fs, pl); }
     }
   }
+  pl._lx = px; pl._lz = pz;
+}
+
+// ---------- crash physics: who gets shoved, spun, rocked or tipped over ----------
+// mass decides everything: a bus barely notices a bike, a bike stops dead against a bus, a parked car slides and spins
+const BASE_KG = { bike: 16, scooter: 15, skate: 4, motorbike: 190, snowmobile: 250, bus: 12500, van: 2600, pickup: 2300, suv: 2000, tug: 2500, sports: 1500, taxi: 1500 };
+export function massOf(v) { return (v.d.kg || BASE_KG[v.type] || 1450) + (v.driver || v.rider ? 75 : 0); }
+export const crashHooks = {};   // crashfx.js: car alarms, angry drivers, hubcaps…
+const bodyW = v => v.model?.body?.W || SPECS[v.type]?.W || (v.d.show ? 0.6 : 1.9);
+const bodyL = v => v.model?.body?.L || SPECS[v.type]?.L || v.d.len;
+const velOf = (v, pl) => v.knock ? [v.knock.vx, v.knock.vz] : (pl && v === pl.vehicle) ? [v.vx, v.vz] : (v.ai && !v.ai.parked) ? [-Math.sin(v.yaw) * v.speed, -Math.cos(v.yaw) * v.speed] : [0, 0];
+// closest points between two 2D segments (each vehicle is a capsule along its length)
+function segClosest(ax, az, bx, bz, cx, cz, dx, dz) {
+  const d1x = bx - ax, d1z = bz - az, d2x = dx - cx, d2z = dz - cz, rx = ax - cx, rz = az - cz;
+  const a = d1x * d1x + d1z * d1z, e = d2x * d2x + d2z * d2z, f = d2x * rx + d2z * rz;
+  let s, t;
+  if (a < 1e-6 && e < 1e-6) { s = t = 0; }
+  else if (a < 1e-6) { s = 0; t = clamp(f / e, 0, 1); }
+  else { const c = d1x * rx + d1z * rz; if (e < 1e-6) { t = 0; s = clamp(-c / a, 0, 1); } else { const b = d1x * d2x + d1z * d2z, den = a * e - b * b; s = den > 1e-6 ? clamp((b * f - c * e) / den, 0, 1) : 0; t = (b * s + f) / e; if (t < 0) { t = 0; s = clamp(-c / a, 0, 1); } else if (t > 1) { t = 1; s = clamp((b - c) / a, 0, 1); } } }
+  return [ax + d1x * s, az + d1z * s, cx + d2x * t, cz + d2z * t];
+}
+function capsule(v) { const W = bodyW(v), h = Math.max(0, bodyL(v) / 2 - W / 2), fx = -Math.sin(v.yaw), fz = -Math.cos(v.yaw); return [v.x + fx * h, v.z + fz * h, v.x - fx * h, v.z - fz * h, W / 2]; }
+let bumpCool = 0;
+function collidePair(a, b, pl) {
+  if (Math.abs(a.x - b.x) > 16 || Math.abs(a.z - b.z) > 16 || Math.abs(a.y - b.y) > 2 || b.d.kind !== 'road' || b.script) return;
+  const A = capsule(a), B = capsule(b), [px, pz, qx, qz] = segClosest(A[0], A[1], A[2], A[3], B[0], B[1], B[2], B[3]);
+  let nx = qx - px, nz = qz - pz; const dist = Math.hypot(nx, nz), min = A[4] + B[4];
+  if (dist >= min) return;
+  if (dist < 1e-3) { nx = b.x - a.x; nz = b.z - a.z; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l; } else { nx /= dist; nz /= dist; }
+  const ma = massOf(a), mb = massOf(b), [avx, avz] = velOf(a, pl), [bvx, bvz] = velOf(b, pl);
+  const vr = (avx - bvx) * nx + (avz - bvz) * nz;   // closing speed along the contact normal
+  const heavyAI = b.ai && !b.ai.parked && !b.knock;
+  const J = vr > 0.5 ? 1.25 * vr / (1 / ma + 1 / mb) : 0, dvb = J / mb;
+  const moveB = !heavyAI || dvb > 0.5;
+  // push apart (heavier one moves less; moving AI traffic only moves if it really gets knocked)
+  const over = min - dist + 0.02, sa = moveB ? mb / (ma + mb) : 1;
+  a.x -= nx * over * sa; a.z -= nz * over * sa;
+  if (moveB) { b.x += nx * over * (1 - sa); b.z += nz * over * (1 - sa); }
+  if (!J) { if (moveB && !b.knock && !b.ai) syncModel(b); return; }
+  // spin: the hit lands off-centre on b (contact point on its surface), so it turns
+  const cx = qx - nx * B[4] - b.x, cz = qz - nz * B[4] - b.z, L = bodyL(b), W = bodyW(b), I = mb * (L * L + W * W) / 12;
+  const dw = clamp((cz * nx - cx * nz) * J / I, -4, 4);
+  if (moveB) knock(b, nx * dvb, nz * dvb, dw, vr);
+  // a: the player's ride loses speed by the mass ratio (or bounces back); a shoved car just keeps sliding
+  const dva = J / ma;
+  if (pl) {
+    const nvx = avx - nx * dva, nvz = avz - nz * dva, fx = -Math.sin(a.yaw), fz = -Math.cos(a.yaw);
+    a.vx = nvx; a.vz = nvz; a.speed = nvx * fx + nvz * fz;
+    a.yaw -= clamp((cz * nx - cx * nz) * J / (ma * (bodyL(a) ** 2 + bodyW(a) ** 2) / 12), -0.6, 0.6) * 0.15;   // a little twitch back
+    if (vr > 2.5) { sfx.bump(); if (vr > 6 && G.t > bumpCool) { bumpCool = G.t + 0.8; pl.stats && (pl.stats.bumps = (pl.stats.bumps || 0) + 1); } }
+    if (a.d.show && dva > 6) a.roll = clamp(a.roll + R(-0.6, 0.6), -0.9, 0.9);   // two-wheeler: a big wobble
+    crashHooks.hit?.(a, b, vr, pl);
+  } else { a.knock.vx -= nx * dva; a.knock.vz -= nz * dva; if (vr > 3) sfx.bump(); crashHooks.hit?.(a, b, vr, null); }
+}
+// start (or add to) a vehicle's "knocked loose" slide
+export function knock(o, ix, iz, dw, hit) {
+  if (o.driver === 'player') return;
+  let k = o.knock;
+  if (!k) { const [vx, vz] = velOf(o, null); k = o.knock = { vx, vz, w: 0, rv: 0, pv: 0, t: 0, rest: 0, tip: 0, wob: 0, sc: o.g.scale.clone() }; o.speed = 0; }
+  k.vx += ix; k.vz += iz; k.w += dw; if (Math.hypot(ix, iz) > 0.3 || Math.abs(dw) > 0.1) { k.t = 0; k.rest = 0; k.up = false; }   // a gentle touch doesn't restart the "get back up" timer
+  const rx = Math.cos(o.yaw), rz = -Math.sin(o.yaw), lat = ix * rx + iz * rz, lon = -(ix * -Math.sin(o.yaw) + iz * -Math.cos(o.yaw));
+  if (o.d.show) { if (!(Math.abs(o.roll) > 0.6 && k.tip) && (Math.hypot(ix, iz) > 0.8 || hit > 3)) { k.tip = (lat > 0 ? -1 : 1) * R(1.35, 1.5); k.rv = -Math.sign(lat || 1) * Math.min(3, 0.5 + hit * 0.15); } }   // already lying down: stays on that side
+  else { k.rv += clamp(-lat * 0.09, -0.9, 0.9); k.pv += clamp(lon * 0.05, -0.5, 0.5); k.wob = Math.min(1, k.wob + hit / 12); if (hit > 9) o.dent = Math.min(0.1, (o.dent || 0) + hit * 0.003); }
+}
+function knockStep(v, dt) {
+  const k = v.knock; k.t += dt;
+  const two = v.d.show, down = two && Math.abs(v.roll) > 0.8, sp = Math.hypot(k.vx, k.vz);
+  const fr = (down ? 5.5 : two ? 4 : 7) * dt;   // tyres skidding sideways (or a bike sliding on its side)
+  if (sp > fr) { k.vx -= k.vx / sp * fr; k.vz -= k.vz / sp * fr; } else k.vx = k.vz = 0;
+  k.w *= Math.exp(-dt * (down ? 3 : 2.2));
+  const ox = v.x, oz = v.z; v.x += k.vx * dt; v.z += k.vz * dt; v.yaw += k.w * dt;
+  // walls stop it (map outlines that poke into the street don't), small street stuff gets smashed by a sliding car
+  const rd = nearestRoad(v.x, v.z, 14, q => isDriveType(q.t)), onRoad = rd && rd.d < rd.road.w / 2 - 1.2;
+  const p = { x: v.x, z: v.z, kg: massOf(v) };
+  if ((!onRoad && collideBuildings(p, v.d.r, v.y)) | collideStatic(p, v.d.r * 0.85, v.y + 0.3, sp, sp > 0.1 ? [k.vx / sp, k.vz / sp] : null)) { v.x = p.x; v.z = p.z; k.vx *= -0.2; k.vz *= -0.2; k.w *= 0.5; }
+  if (p.broke) { const f = p.kg / (p.kg + (p.brokeKg || 0) * 1.6); k.vx *= f; k.vz *= f; }
+  const s = walkY(v.x, v.z, v.y - 1.0); v.y += (s - v.y) * Math.min(1, dt * 10);
+  if (two) {   // falls over, faster as it goes, with a little bounce on the ground
+    if (k.tip && !k.up) { k.rv += Math.sign(k.tip) * dt * 9; v.roll += k.rv * dt; if (Math.abs(v.roll) >= Math.abs(k.tip)) { v.roll = k.tip; k.rv = -k.rv * 0.25; if (Math.abs(k.rv) < 0.3) k.rv = 0; } }
+  } else {     // body rocks on its springs, nose dips/lifts, and the panels wobble
+    k.rv += (-38 * v.roll - 4.5 * k.rv) * dt; v.roll += k.rv * dt;
+    k.pv += (-45 * v.pitch - 5 * k.pv) * dt; v.pitch += k.pv * dt;
+    const w = k.wob * Math.sin(k.t * 30) * Math.exp(-k.t * 4) * 0.06, dn = v.dent || 0;
+    v.g.scale.set(k.sc.x * (1 + w), k.sc.y * (1 - w * 0.6 - dn * 0.4), k.sc.z * (1 - dn));
+  }
+  for (const wh of v.wheels) wh.w.rotation.x -= sp * dt / wh.r;
+  syncModel(v);
+  if (v.rider && v.rider.pose) { const st = v.rider.st; st.kind = 'ride'; st.amp = 0; v.rider.pose(dt); }
+  // settled?
+  if (sp > 0.15 || Math.abs(k.w) > 0.06 || k.t < 0.8 || (!two && Math.abs(k.rv) > 0.05)) return;
+  k.rest += dt;
+  const a = v.ai;
+  if (!a || a.parked) { if (!two) v.roll = v.pitch = 0; v.g.scale.set(k.sc.x, k.sc.y * (1 - (v.dent || 0) * 0.4), k.sc.z * (1 - (v.dent || 0))); v.knock = null; syncModel(v); return; }   // parked things just stay where they ended up
+  if (two && k.tip) {   // a knocked-down cyclist picks the bike up after a few seconds
+    if (k.rest < 3) return;
+    k.up = true; v.roll *= Math.exp(-dt * 4); syncModel(v); if (Math.abs(v.roll) > 0.05) return;
+  } else if (k.rest < 2.2) return;
+  // the driver collects themselves and drives off: back to the nearest lane
+  v.roll = v.pitch = 0; v.knock = null;
+  if (!two) v.g.scale.set(k.sc.x, k.sc.y * (1 - (v.dent || 0) * 0.4), k.sc.z * (1 - (v.dent || 0)));
+  const nr = nearestRoad(v.x, v.z, 25, r => isDriveType(r.t) && r.t !== 6 && (!a.cyc || (r.t >= 3 && r.t <= 5)));
+  if (!nr || nr.d > 14) { v.ai = null; syncModel(v); return; }   // too far off the road: left there (towed away later)
+  const r = nr.road, ex = NX(nr.e.b) - NX(nr.e.a), ez = NZ(nr.e.b) - NZ(nr.e.a), fwdDot = -Math.sin(v.yaw) * ex - Math.cos(v.yaw) * ez;
+  a.e = nr.e; a.t = nr.t * nr.e.len; a.dir = r.o ? 1 : (fwdDot >= 0 ? 1 : -1); if (a.dir < 0) a.t = nr.e.len - a.t;
+  a.side = a.cyc ? r.w / 2 - 0.9 : r.o ? 0 : r.w / 4; a.rejoin = 1.6; a.wait = 0; v.speed = 0;
 }
 
 // surprise: the ice cream truck plays its tune when it's near you (a little 8-note jingle every ~7 s)

@@ -5,7 +5,8 @@
 // The real (instanced) piece is hidden and a loose copy does the falling. City crews put things back once you've gone.
 import * as THREE from 'three';
 import { G, scene, R, pick } from './core.js';
-import { setBreakHandler } from './colliders.js';
+import { setBreakHandler, propKg } from './colliders.js';
+import { updateCrashFx } from './crashfx.js';
 import { surfaceY } from './city.js';
 import { peds, say } from './people.js';
 import { ui } from './ui.js';
@@ -26,7 +27,7 @@ function hide(c) {
   hidden.push({ c, saved, t: G.t });
   return saved;
 }
-function breakIt(c, dir, speed) {
+function breakIt(c, dir, speed, obj) {
   c.gone = true;
   const saved = hide(c); if (!saved.length) return;
   dir = dir || [0, -1]; const dx = dir[0], dz = dir[1];
@@ -39,7 +40,12 @@ function breakIt(c, dir, speed) {
     g.add(piece);
   }
   const kind = c.kind || 'tip';
-  const d = { g, kind, t: 0, axis: new THREE.Vector3(dz, 0, -dx).normalize(), ang: 0, angV: 0.6 + speed * 0.09, vx: dx * speed * 0.55, vz: dz * speed * 0.55, vy: kind === 'fly' ? 3 + speed * 0.15 : 0, spin: new THREE.Vector3(R(-6, 6), R(-6, 6), R(-6, 6)) };
+  // mass decides the fling: a bus sends a bin flying ~1.25x its speed, a bike only nudges a sandwich board along
+  const mp = obj?.kg || 1400, mo = propKg(c), fling = kind === 'fly' ? Math.min(1.3, 1.25 * mp / (mp + mo)) : 0.55 * Math.min(1, mp / (mp + mo) * 1.3);
+  // tall poles hit not much faster than their break speed BEND over instead of falling flat
+  const tall = c.top - (c.base || 0) > 4, maxAng = kind === 'tip' && tall && speed < (c.brk || 10) * 1.5 ? R(0.45, 0.95) : Math.PI / 2 - 0.08;
+  const d = { g, kind, t: 0, axis: new THREE.Vector3(dz, 0, -dx).normalize(), ang: 0, maxAng, angV: 0.6 + speed * 0.09, vx: dx * speed * fling, vz: dz * speed * fling, vy: kind === 'fly' ? (3 + speed * 0.15) * Math.min(1, fling + 0.3) : 0, spin: new THREE.Vector3(R(-6, 6), R(-6, 6), R(-6, 6)) };
+  if (maxAng < 1) d.vx = d.vz = 0;   // bent: stays rooted
   debris.push(d);
   sfx.bump?.(); if (kind === 'tip' && c.top - (c.base || 0) > 4) sfx.thwack?.();
   if (kind === 'hydrant') {
@@ -60,6 +66,7 @@ function makeGeyser(base, life) {
 }
 const _o = new THREE.Object3D();
 export function updateBreakables(dt, pl) {
+  updateCrashFx(dt, pl);
   for (let i = debris.length - 1; i >= 0; i--) {
     const d = debris[i]; d.t += dt;
     if (d.kind === 'fly') {
@@ -68,7 +75,7 @@ export function updateBreakables(dt, pl) {
       if (d.g.position.y < gy) { d.g.position.y = gy; d.vy = Math.abs(d.vy) > 2 ? -d.vy * 0.3 : 0; d.vx *= 0.6; d.vz *= 0.6; d.spin.multiplyScalar(0.5); }
       d.g.rotation.x += d.spin.x * dt; d.g.rotation.y += d.spin.y * dt; d.g.rotation.z += d.spin.z * dt;
     } else {   // tip over: rotate about the base, faster as it falls, a little bounce at the end
-      if (d.ang < Math.PI / 2 - 0.08) { d.angV += dt * 4 * Math.cos(d.ang * 0.5); d.ang = Math.min(Math.PI / 2 - 0.08, d.ang + d.angV * dt); }
+      if (d.ang < d.maxAng) { d.angV += dt * 4 * Math.cos(d.ang * 0.5); d.ang = Math.min(d.maxAng, d.ang + d.angV * dt); }
       d.g.quaternion.setFromAxisAngle(d.axis, d.ang); d.g.position.x += d.vx * dt * Math.max(0, 1 - d.t * 2); d.g.position.z += d.vz * dt * Math.max(0, 1 - d.t * 2);
     }
     if (d.t > 25) { d.g.traverse(o => { if (o.material?.transparent === false) { o.material = o.material.clone(); o.material.transparent = true; } }); }

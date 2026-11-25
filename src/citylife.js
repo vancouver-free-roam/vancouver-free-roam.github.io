@@ -364,7 +364,7 @@ export function cityLifePrompt(pl) {
   if (tapped('KeyE') && G.t - lastE > 0.3) { lastE = G.t; useItem(it, pl); }
   return `<kbd>E</kbd> ${label}`;
 }
-function knock(it, dx, dz, speed) { const L = Math.hypot(dx, dz) || 1; collideStatic({ x: it.c.x - dx / L * 0.01, z: it.c.z - dz / L * 0.01 }, 0.02, -1e9, Math.max(it.c.brk || 3, speed), [dx / L, dz / L]); }
+function knock(it, dx, dz, speed) { const L = Math.hypot(dx, dz) || 1; collideStatic({ x: it.c.x - dx / L * 0.01, z: it.c.z - dz / L * 0.01, kg: 80 }, 0.02, -1e9, Math.max(it.c.brk || 3, speed), [dx / L, dz / L]); }
 function useItem(it, pl) {
   const fx = -Math.sin(pl.yaw), fz = -Math.cos(pl.yaw);
   if (it.act === 'cone') { knock(it, fx, fz, 7); ui.toast('🚧 Bonk.', pick(['A road worker sighs from somewhere.', 'The cone has been liberated.', 'Somewhere, a city engineer feels a disturbance.']), 1800); return; }

@@ -25,6 +25,8 @@ export function setColliders(tag, list) {
   grids.set(tag, g);
 }
 let onBreak = null;
+// rough mass of a breakable thing (kg): decides how much it slows you and how far it flies
+export const propKg = c => c.kg || (c.kind === 'hydrant' ? 220 : c.kind === 'fly' ? 25 : (c.top - (c.base ?? c.top - 2)) > 4 ? 200 : 45);
 export function setBreakHandler(fn) { onBreak = fn; }
 // speed + dir (unit vector of travel) are only passed by vehicles: fast enough = breakable things get knocked over
 export function collideStatic(obj, r, y = -1e9, speed = 0, dir = null) {
@@ -35,7 +37,8 @@ export function collideStatic(obj, r, y = -1e9, speed = 0, dir = null) {
       if (c.gone || y > c.top) continue;
       const dx = obj.x - c.x, dz = obj.z - c.z, min = r + c.r, d2 = dx * dx + dz * dz;
       if (d2 >= min * min) continue;
-      if (c.brk && speed >= c.brk && onBreak) { onBreak(c, dir, speed); obj.broke = (obj.broke || 0) + 1; continue; }
+      if (c.onHit && speed > 1.5) { c.onHit(c, dir, speed, obj); continue; }   // turns into a real loose body (curbside parked cars)
+      if (c.brk && speed >= c.brk && onBreak) { onBreak(c, dir, speed, obj); obj.broke = (obj.broke || 0) + 1; obj.brokeKg = (obj.brokeKg || 0) + propKg(c); continue; }
       const d = Math.sqrt(d2) || 0.001; obj.x = c.x + dx / d * min; obj.z = c.z + dz / d * min; hit = true;
     }
   }
