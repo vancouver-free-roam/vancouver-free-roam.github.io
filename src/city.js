@@ -343,6 +343,64 @@ function trimAtJunctions(r, pts) {
   const at = s => { let i = 1; while (i < cum.length - 1 && cum[i] < s) i++; const t = (s - cum[i - 1]) / (cum[i] - cum[i - 1] || 1), a = pts[i - 1], b = pts[i]; return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, y: a.y + (b.y - a.y) * t, d: a.d }; };
   const out = [at(c0)]; for (let i = 0; i < pts.length; i++) if (cum[i] > c0 && cum[i] < L - c1) out.push(pts[i]); out.push(at(L - c1)); return out;
 }
+// Footpaths / cycle paths / the seawall are built level and smooth like real ones: instead of draping every vertex over
+// the lumpy 10 m ground (and tilting with it sideways), each path gets one height profile along its length (every 2 m):
+// the highest ground across its width (so it never sinks), dips up to ~24 m long filled in (at most ~1 m; never floating more than 2.2 m), then
+// smoothed over ~12 m while staying on top of the ground. Level across the width; a skirt hides any gap at the edges.
+// Wild mountain trails and engineered (fx) / bridge / ramp paths keep their old heights.
+const PSTEP = 2, pathProf = new Map();
+const smoothPath = r => r.t >= 7 && !r.b && !r.fx && !r.ramp && !(r.t !== 8 && r.rg && townDensity(NX(r.p[0]), NZ(r.p[0])) < 0.004);
+const pathEnv = new Map(), _pn = [];
+function pathProfile(ri) {
+  let P = pathProf.get(ri); if (P) return P;
+  // side-by-side paths (the seawall's bike lane + walking lane) share the highest ground of both, so they come out level with each other
+  const E = pathEnvelope(ri), r = M.roads[ri], hw = r.w / 2, g = Array.from(E.g), n = g.length;
+  for (let k = 0; k < n; k++) {
+    for (const e of roadGrid.near(E.x[k], E.z[k], hw + 4, _pn)) {
+      if (e.r === ri) continue; const q = M.roads[e.r]; if (!(q.sm ?? (q.sm = smoothPath(q)))) continue;
+      const ax = NX(e.a), az = NZ(e.a), dx = NX(e.b) - ax, dz = NZ(e.b) - az, L2 = dx * dx + dz * dz || 1, t = clamp(((E.x[k] - ax) * dx + (E.z[k] - az) * dz) / L2, 0, 1);
+      if (Math.hypot(E.x[k] - ax - dx * t, E.z[k] - az - dz * t) > hw + q.w / 2 + 1.5) continue;
+      const B = pathEnvelope(e.r), f = clamp(e.s0 + t * e.len, 0, B.L) / PSTEP, i = Math.min(Math.floor(f), B.g.length - 2);
+      const bg = B.g[i] + (B.g[i + 1] - B.g[i]) * (f - i);
+      if (bg < E.c[k] + 1.8) g[k] = Math.max(g[k], bg);   // not a trail on the cliff above you
+
+    }
+  }
+  const W = 6, dil = g.map((_, k) => { let m = -1e9; for (let j = Math.max(0, k - W); j <= Math.min(n - 1, k + W); j++) m = Math.max(m, g[j]); return m; });
+  let y = dil.map((_, k) => { let m = 1e9; for (let j = Math.max(0, k - W); j <= Math.min(n - 1, k + W); j++) m = Math.min(m, dil[j]); return Math.min(m, g[k] + 1.0); });
+  for (let it = 0; it < 6; it++) {   // smooth, but never (more than a few cm) below the ground
+    const A = 3, s = y.map((_, k) => { let t = 0, c = 0; for (let j = Math.max(0, k - A); j <= Math.min(n - 1, k + A); j++) { t += y[j]; c++; } return t / c; });
+    y = s.map((v, k) => Math.min(E.c[k] + 2.2, Math.max(v, g[k] - (it === 5 ? 0.06 : 0))));   // and never more than 2.2 m over it (feet / wheels let go at 3 m)
+  }
+  P = { y: Float32Array.from(y), L: E.L }; pathProf.set(ri, P); return P;
+}
+function pathEnvelope(ri) {   // the highest drawn ground across the path's width, every 2 m along it
+  let E = pathEnv.get(ri); if (E) return E;
+  const r = M.roads[ri], hw = Math.max(r.w / 2, 0.9), g = [], X = [], Z = [], C = [];
+  const cum = [0]; for (let i = 1; i < r.p.length; i++) cum.push(cum[i - 1] + Math.hypot(NX(r.p[i]) - NX(r.p[i - 1]), NZ(r.p[i]) - NZ(r.p[i - 1])));
+  const Lt = cum[cum.length - 1], n = Math.max(2, Math.ceil(Lt / PSTEP) + 1); let seg = 1;
+  for (let k = 0; k < n; k++) {
+    const s = Math.min(Lt, k * PSTEP); while (seg < cum.length - 1 && cum[seg] < s) seg++;
+    const a = r.p[seg - 1], b = r.p[seg], t = (s - cum[seg - 1]) / (cum[seg] - cum[seg - 1] || 1);
+    const x = NX(a) + (NX(b) - NX(a)) * t, z = NZ(a) + (NZ(b) - NZ(a)) * t, L = Math.hypot(NX(b) - NX(a), NZ(b) - NZ(a)) || 1, px = -(NZ(b) - NZ(a)) / L * hw, pz = (NX(b) - NX(a)) / L * hw;
+    const c = groundY(x, z); X.push(x); Z.push(z); C.push(c);
+    g.push(Math.min(c + 0.45, Math.max(c, groundY(x + px, z + pz) - 0.25, groundY(x - px, z - pz) - 0.25)));   // a steep side slope may cover the top edge a little (the data smears cliffs)
+  }
+  E = { g: Float32Array.from(g), c: C, x: X, z: Z, L: Lt }; pathEnv.set(ri, E); return E;
+}
+export const _pathDebug = { pathProfile: ri => pathProfile(ri), pathEnvelope: ri => pathEnvelope(ri), smoothPath: r => smoothPath(r), profAt: (P, s) => profAt(P, s) };   // tools/pathcheck.js
+function profAt(P, s) { const f = clamp(s, 0, P.L) / PSTEP, i = Math.min(Math.floor(f), P.y.length - 2), t = f - i; return P.y[i] + (P.y[i + 1] - P.y[i]) * t; }
+// a skirt down from a level path's edge to the ground wherever the ground falls away below it
+function pathSkirt(pts, lat, mat) {
+  const b = bucket(pts[0].x, pts[0].z, mat);
+  for (let i = 1; i < pts.length; i++) {
+    const e = [pts[i - 1], pts[i]].map((p, k) => { const q = pts[Math.min(i - 1 + k + 1, pts.length - 1)], o = pts[Math.max(i - 1 + k - 1, 0)]; let dx = q.x - o.x, dz = q.z - o.z; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L; const x = p.x - dz * lat, z = p.z + dx * lat; return { x, z, top: p.y, bot: groundY(x, z) - 0.15 }; });
+    if (e[0].top - e[0].bot < 0.27 && e[1].top - e[1].bot < 0.27) continue;
+    const k = b.pos.length / 3;
+    for (const v of e) { b.pos.push(v.x, v.bot, v.z, v.x, v.top, v.z); b.uv.push(0, 0, 0.3, 0); }
+    if (lat > 0) b.idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); else b.idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);   // face outward
+  }
+}
 // the height of the DRAWN street / sidewalk / path here (they sit a little above the ground), or null if not on one
 const _ws = [];
 export function pavedY(x, z) {
@@ -351,6 +409,11 @@ export function pavedY(x, z) {
     const r = M.roads[e.r]; if (r.b) continue; if (r.t >= 7 && r.rg && isSnow(x, z)) continue;   // trails buried under mountain snow
     const ax = NX(e.a), az = NZ(e.a), dx = NX(e.b) - ax, dz = NZ(e.b) - az, L2 = dx * dx + dz * dz || 1, t = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1), d = Math.hypot(x - ax - dx * t, z - az - dz * t);
     const hw = r.w / 2, side = hasWalk(r); if (d > hw + (side ? 2.6 : 0.3)) continue;
+    if (r.sm ?? (r.sm = smoothPath(r))) {   // level, smoothed path (the part inside a street's strip isn't drawn: don't stand on it)
+      const y = profAt(pathProfile(e.r), e.s0 + t * e.len) + 0.14 + (e.r % 9) * 0.004;
+      const gy = groundY(x, z); if (y > gy + 2.9 || (y > gy + 0.45 && inStreet(x, z, hw))) continue;   // (the edge of a higher lane beside yours)
+      if (best === null || y > best) best = y; continue;
+    }
     const y = (r.fx ? Math.max(nodeY[e.a] + (nodeY[e.b] - nodeY[e.a]) * t, groundY(x, z)) : groundY(x, z) + rampOff(r, e.s0 + t * e.len)) + (r.t <= 4 ? 0.26 : r.t <= 6 ? 0.22 : 0.14) + (e.r % 9) * 0.004 + (d > hw ? CURB : 0);
     if (best === null || y > best) best = y;
     if (d <= hw && r.t <= 6 && (onRoad === null || y > onRoad)) onRoad = y;
@@ -379,7 +442,9 @@ function roadGeometry(r, ri) {   // the drawn part of a road (made per tile, onl
   if (t >= 7 && !r.b) {   // a path / mapped sidewalk: skip the stretches that lie inside a street's own road + sidewalk strip
     const tw = mat === 'trail' ? Math.min(hw, 0.75) : mat === 'gravel' ? Math.min(hw, 1.3) : hw;   // dirt singletrack is narrow, gravel paths a bit wider
     const vs = mat === 'steps' ? 2.8 : mat === 'board' ? 1.2 : mat === 'trail' ? 0.12 : 0.25;   // stair treads every ~36 cm, planks across
-    let run = []; const flush = () => { if (run.length > 1) ribbon(run, -tw, tw, mat, vs); run = []; };
+    const lvl = r.sm ?? (r.sm = smoothPath(r)), skirt = mat === 'trail' || mat === 'gravel' ? 'bank' : 'curb';
+    if (lvl) { const P = pathProfile(ri); let s = 0; pts.forEach((p, i) => { if (i) s += Math.hypot(p.x - pts[i - 1].x, p.z - pts[i - 1].z); p.y = profAt(P, s) + lift; delete p.d; }); }
+    let run = []; const flush = () => { if (run.length > 1) { ribbon(run, -tw, tw, mat, vs); if (lvl) { pathSkirt(run, tw, skirt); pathSkirt(run, -tw, skirt); } } run = []; };
     for (const p of pts) { if (inStreet(p.x, p.z, hw)) flush(); else run.push(p); }
     flush(); return;
   }

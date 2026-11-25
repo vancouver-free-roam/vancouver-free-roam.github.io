@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { G, scene, std, canvasTex, pick, R } from './core.js';
 import { groundY, isWater, WATER_T, townDensity, CITY } from './terrain.js';
 import { Crowd, newLook } from './people.js';
+import { pavedY } from './city.js';
 
 const M = window.MAP, RAD = 650;
 // ---------- seawall ----------
@@ -37,6 +38,7 @@ function buildWall(px, pz) {
   const W = { p: [], u: [], i: [] }, C = { p: [], u: [], i: [] }, F = { p: [], u: [], i: [] };
   const quad = (B, a, b, c, d, u0, u1, v0, v1) => { const k = B.p.length / 3; B.p.push(...a, ...b, ...c, ...d); B.u.push(u0, v0, u1, v0, u1, v1, u0, v1); B.i.push(k, k + 1, k + 2, k, k + 2, k + 3); };
   for (const line of M.coast || []) {
+    const segs = []; let run = 0;
     for (let i = 2; i < line.length; i += 2) {
       const ax = line[i - 2], az = line[i - 1], bx = line[i], bz = line[i + 1], L = Math.hypot(bx - ax, bz - az); if (L < 0.5) continue;
       if (Math.min(Math.hypot(ax - px, az - pz), Math.hypot(bx - px, bz - pz)) > RAD) continue;
@@ -44,13 +46,22 @@ function buildWall(px, pz) {
       for (let k = 0; k < n; k++) {
         const x0 = ax + ux * L * k / n, z0 = az + uz * L * k / n, x1 = ax + ux * L * (k + 1) / n, z1 = az + uz * L * (k + 1) / n, mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
         let nx = -uz, nz = ux; if (isWater(mx - nx * 4, mz - nz * 4) && !isWater(mx + nx * 4, mz + nz * 4)) { nx = -nx; nz = -nz; }   // n points to the water
-        if (!isWater(mx + nx * 5, mz + nz * 5) || isWater(mx - nx * 4, mz - nz * 4)) continue;
-        if (!urban(mx, mz) || onBeach(mx - nx * 3, mz - nz * 3)) continue;
+        if (!isWater(mx + nx * 5, mz + nz * 5) || isWater(mx - nx * 4, mz - nz * 4)) { run++; continue; }
+        if (!urban(mx, mz) || onBeach(mx - nx * 3, mz - nz * 3)) { run++; continue; }
         // the drawn ground often reaches a few metres past the map's coastline: slide the wall out to the real water's edge
         const edge = (x, z) => { let o = 0; while (o < 30 && groundY(x + nx * o, z + nz * o) > 0.2) o += 1.5; return o; };
-        const o0 = edge(x0, z0), o1 = edge(x1, z1);
-        const top = Math.max(0.95, Math.min(4.5, groundY(mx + nx * ((o0 + o1) / 2 - 2.5), mz + nz * ((o0 + o1) / 2 - 2.5)) + 0.45)), d = L / n;
-        const u0 = (k * d) / 4, u1 = ((k + 1) * d) / 4;
+        const o0 = edge(x0, z0), o1 = edge(x1, z1), om = (o0 + o1) / 2, d = L / n;
+        // the cap sits flush with the promenade behind it (the level seawall path), else just above the ground
+        let pv = null; for (const back of [2.5, 5, 8]) { const p = pavedY(mx + nx * (om - back), mz + nz * (om - back)); if (p !== null) { pv = p; break; } }
+        const want = pv !== null ? pv - 0.1 : groundY(mx + nx * (om - 2.5), mz + nz * (om - 2.5)) + 0.45;
+        segs.push({ run, want, x0, z0, x1, z1, nx, nz, o0, o1, u0: (k * d) / 4, u1: ((k + 1) * d) / 4 });
+      }
+    }
+    // smooth the cap height along the shore (±5 pieces ≈ ±15 m) so it runs level like the real granite wall
+    for (let a = 0; a < segs.length; a++) {
+      let t = 0, c = 0; for (let b = Math.max(0, a - 5); b <= Math.min(segs.length - 1, a + 5); b++) if (segs[b].run === segs[a].run) { t += segs[b].want; c++; }
+      const { x0, z0, x1, z1, nx, nz, o0, o1, u0, u1 } = segs[a], top = Math.max(0.95, Math.min(4.5, t / c));
+      {
         const X0 = x0 + nx * o0, Z0 = z0 + nz * o0, X1 = x1 + nx * o1, Z1 = z1 + nz * o1;
         quad(W, [X0, -2.5, Z0], [X1, -2.5, Z1], [X1, top, Z1], [X0, top, Z0], u0, u1, 0, (top + 2.5) / 4);
         quad(C, [X0, top + 0.12, Z0], [X1, top + 0.12, Z1], [X1 - nx * 0.7, top + 0.12, Z1 - nz * 0.7], [X0 - nx * 0.7, top + 0.12, Z0 - nz * 0.7], 0, 1, 0, 1);
