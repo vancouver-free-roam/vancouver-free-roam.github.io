@@ -170,9 +170,13 @@ const worship = new Map();
 let artT = 0;
 function updateArt(px, pz) {
   artT -= G.dt; if (artT > 0) return; artT = 0.8;
+  const t0 = performance.now();   // pieces cost ~10 ms each to model: build at most ~8 ms worth per frame, nearest first
+  const todo = []; for (const a of ART) { const d = Math.max(Math.abs(a.x - px), Math.abs(a.z - pz)); if (d < 450 && built.get(a) === undefined) todo.push([d, a]); }
+  todo.sort((p, q) => p[0] - q[0]);
+  for (const [, a] of todo) { if (performance.now() - t0 > 8) { artT = 0; break; } const m = landmarkHere(a) ? null : buildArt(a); if (m) scene.add(m); built.set(a, m || null); }
   for (const a of ART) {
     const d = Math.max(Math.abs(a.x - px), Math.abs(a.z - pz)), have = built.get(a);
-    if (d < 450 && have === undefined) { const m = landmarkHere(a) ? null : buildArt(a); if (m) scene.add(m); built.set(a, m || null); }
+    if (d < 450) continue;
     else if (d > 560 && have !== undefined) { if (have) { scene.remove(have); have.traverse?.(o => o.geometry?.dispose()); } built.delete(a); }
   }
   for (const p of pois) {
@@ -185,7 +189,7 @@ function updateArt(px, pz) {
   const cl = []; for (const [a, m] of built) if (m && !m.userData.wall && m.userData.r > 0) { if (m.userData.top === undefined) { const bb = new THREE.Box3().setFromObject(m.children[0] || m); m.userData.top = isFinite(bb.max.y) ? bb.max.y : surfaceY(a.x, a.z) + 3; } cl.push({ x: a.x, z: a.z, r: Math.min(3.5, m.userData.r * 0.8), top: m.userData.top }); } setColliders('art', cl);   // you can climb onto a statue's base or a big sculpture
 }
 // famous pieces that landmarks.js already builds by hand: don't draw a second, generic one on top
-const LANDMARK_ART = { orca: 30, drop: 30, inukshuk: 30, laughter: 40, wetsuit: 30, gate: 35, totems: 45, ninegun: 25, steamclock: 20, gassyjack: 20, cauldron: 35, eastvan: 30, giants: 25, dude: 25, sunyatsen: 40, woodwards: 30, hollowtree: 25, siwash: 40, bloedel: 30 };
+const LANDMARK_ART = { orca: 30, drop: 30, inukshuk: 30, laughter: 40, wetsuit: 30, gate: 35, ninegun: 25, steamclock: 20, gassyjack: 20, cauldron: 35, eastvan: 30, giants: 25, dude: 25, sunyatsen: 40, woodwards: 30, hollowtree: 25, siwash: 40, bloedel: 30 };
 function landmarkHere(a) {
   if (Math.hypot(a.x - QE_FOUNTAIN.x, a.z - QE_FOUNTAIN.z) < 10) return true;   // qepark.js builds the Dancing Waters
   for (const id in LANDMARK_ART) { const s = SPOTS[id]; if (s && Math.hypot(a.x - s.x, a.z - s.z) < LANDMARK_ART[id]) return true; }

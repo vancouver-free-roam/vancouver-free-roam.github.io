@@ -6,6 +6,8 @@ import { makeVehicle, vehicles } from './vehicles.js';
 import { SPOTS } from './landmarks.js';
 import { addFlatSurface, addDeck } from './city.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Kit } from './artkit.js';
+import { jadeCanoe } from './artfamous.js';
 const pending = new Map();
 function queue(geo, mat) { if (!pending.has(mat)) pending.set(mat, []); pending.get(mat).push(geo.index ? geo.toNonIndexed() : geo); }
 function flush() { for (const [mat, geos] of pending) { for (const g of geos) { for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k); if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2)); } const m = new THREE.Mesh(mergeGeometries(geos), mat); m.receiveShadow = true; scene.add(m); } pending.clear(); }
@@ -94,8 +96,7 @@ export function buildAirport() {
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(24, 8), new THREE.MeshStandardMaterial({ map: canvasTex(768, 256, (c, w, h) => { c.fillStyle = '#0b4f6c'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = 'bold 200px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('YVR', w / 2, h / 2 + 10); }, false), side: THREE.DoubleSide }));
   sign.position.set(sp.x, sp.y + 6, sp.z); sign.rotation.y = 0.3; scene.add(sign);
   const jc = at(49.1955, -123.1788); AIRPORT.spots.jade = { ...jc, name: 'The Jade Canoe' }; { const g = new THREE.Group(); g.position.set(jc.x, jc.y, jc.z); scene.add(g);
-    addMesh(new THREE.CapsuleGeometry(1.4, 8, 6, 12).rotateZ(Math.PI / 2).scale(1, 0.6, 1), std('#1f4d3a', { metalness: 0.3, roughness: 0.3 }), 0, 1.6, 0, g);
-    for (let i = 0; i < 6; i++) addMesh(new THREE.CapsuleGeometry(0.35, 1, 4, 8), std('#1f4d3a', { metalness: 0.3, roughness: 0.3 }), -3.5 + i * 1.4, 2.8, 0, g); }
+    const k = Kit(); jadeCanoe(k); g.add(k.build()); }   // Bill Reid's Spirit of Haida Gwaii (artfamous.js)
   const lb = at(49.1963, -123.1400); AIRPORT.spots.planespot = { ...lb, name: 'Larry Berg Flight Path Park' };
   addMesh(new THREE.BoxGeometry(6, 0.3, 1.5), std('#6b4a2b'), lb.x, lb.y + 0.5, lb.z);
   AIRPORT.spots.iona = { ...at(49.2190, -123.2160), name: 'Iona Beach jetty' };

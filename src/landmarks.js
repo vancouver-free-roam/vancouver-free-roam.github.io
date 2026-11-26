@@ -4,6 +4,9 @@ import { G, scene, camera, std, addMesh, toXZ, R, canvasTex, clamp } from './cor
 import { heightAt, isWater, lakes } from './terrain.js';
 import { buildings, bldGrid, surfaceY, NX, NZ, buildingAt } from './city.js';
 import { makeHuman } from './people.js';
+import { Kit } from './artkit.js';
+import { girlInWetsuit, gassyJack, gateLion } from './artfamous.js';
+const kitMesh = f => { const k = Kit(); f(k); return k.build(); };
 
 const M = window.MAP;
 export const SPOTS = {};          // id -> {x, z, y, name}
@@ -172,10 +175,7 @@ export function buildLandmarks() {
     for (const [x, z] of [[0, 0], [0.32, 0.32], [-0.32, 0.32], [0.32, -0.32], [-0.32, -0.32]]) addMesh(new THREE.CylinderGeometry(x || z ? 0.07 : 0.1, x || z ? 0.07 : 0.1, x || z ? 0.42 : 0.6, 10), brass, x, 5.15 + (x || z ? 0 : 0.08), z, g);   // 5 whistles
     place(g, p); SPOTS.steamclock.steam = [];
     for (let i = 0; i < 6; i++) { const s = addMesh(new THREE.SphereGeometry(0.4, 8, 6), new THREE.MeshBasicMaterial({ color: '#eee', transparent: true, opacity: 0.6, depthWrite: false }), p.x, p.y + 7.5, p.z, scene, false); s.userData.ph = i / 6; SPOTS.steamclock.steam.push(s); } }
-  { const p = spot('gassyjack', 'Gassy Jack statue', 49.2840, -123.1040); const g = new THREE.Group();
-    addMesh(new THREE.CylinderGeometry(0.7, 0.8, 1.3, 14), std('#6b4a2b'), 0, 0.65, 0, g);
-    const jack = makeHuman({ skin: '#7a5a35', hair: '#5a4025', shirt: '#6b5030', pants: '#5a4428', hat: '#5a4428' });
-    scene.remove(jack.grp); g.add(jack.grp); jack.grp.position.y = 1.3; jack.grp.traverse(o => o.isMesh && (o.material = bronze)); jack.st.kind = 'stand'; jack.pose();
+  { const p = spot('gassyjack', 'Gassy Jack statue', 49.2840, -123.1040); const g = kitMesh(gassyJack);   // (artfamous.js: on his whisky barrel, bowler hat, whiskers)
     place(g, p, 2.4); }
 
   // English Bay: Inukshuk + A-maze-ing Laughter
@@ -225,18 +225,13 @@ export function buildLandmarks() {
     addMesh(new THREE.SphereGeometry(1, 40, 10, 0, Math.PI * 2, 0, Math.PI / 2).scale(80, 14, 66), std('#eef0f2', { roughness: 0.35 }), x, top - 2, z); }
 
   // Stanley Park: totem poles, 9 O'Clock Gun, Girl in a Wetsuit, Siwash Rock, Hollow Tree, Prospect Point
-  { const p = spot('totems', 'Brockton Point Totem Poles', 49.2995, -123.1213); const tc = ['#9b2d20', '#1b1b1b', '#2f6f6a', '#c98b2b', '#e6dcc3'];
-    for (let i = 0; i < 9; i++) { const a = -1.2 + i * 0.3, x = p.x + Math.cos(a) * 14, z = p.z + Math.sin(a) * 14, h = R(8, 13), y = heightAt(x, z);
-      for (let s = 0; s < 5; s++) addMesh(new THREE.CylinderGeometry(0.65, 0.7, h / 5, 10), std(tc[(i + s) % 5]), x, y + h / 5 * (s + 0.5), z);
-      if (i % 3 === 0) addMesh(new THREE.BoxGeometry(5, 0.6, 0.6), std(tc[(i + 2) % 5]), x, y + h * 0.88, z).rotation.y = -a; } }
+  spot('totems', 'Brockton Point Totem Poles', 49.2995, -123.1213);   // the nine real poles are built from OSM by artworks.js (artfamous.js: each one's carved crest figures)
   { const p = spot('ninegun', 'Nine O\'Clock Gun', 49.2965, -123.1225); const g = new THREE.Group();
     addMesh(new THREE.CylinderGeometry(0.35, 0.5, 3.2, 12).rotateZ(Math.PI / 2), std('#222', { metalness: 0.7 }), 0, 1.2, 0, g);
     for (const [x, z] of [[-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) addMesh(new THREE.BoxGeometry(0.3, 3.2, 0.3), white, x, 1.6, z, g);
     addMesh(new THREE.ConeGeometry(4.5, 1.5, 4).rotateY(Math.PI / 4), std('#2f5a3a'), 0, 3.9, 0, g); place(g, p); }
-  { const p = spot('wetsuit', 'Girl in a Wetsuit', 49.3029, -123.1263); const g = new THREE.Group();
-    addMesh(new THREE.DodecahedronGeometry(2.2), stone, 0, 0, 0, g);
-    const h = makeHuman({ skin: '#3a3a3a', hair: '#3a3a3a', shirt: '#3a3a3a', pants: '#3a3a3a' }); scene.remove(h.grp); g.add(h.grp); h.grp.position.y = 1.5; h.grp.traverse(o => o.isMesh && (o.material = bronze)); h.st.kind = 'sit'; h.pose();
-    place(g, { ...p, y: 0 }); }
+  { const p = spot('wetsuit', 'Girl in a Wetsuit', 49.3029, -123.1263); const g = kitMesh(girlInWetsuit);   // facing out to sea (north-east)
+    place(g, { ...p, y: 0 }, 0.6); }
   { const p = spot('siwash', 'Siwash Rock', 49.3054, -123.1550); const g = new THREE.Group();
     addMesh(new THREE.CylinderGeometry(4, 7, 16, 9).translate(0, 8, 0), std('#6e6a62', { flatShading: true }), 0, -2, 0, g);
     addMesh(new THREE.ConeGeometry(2.5, 8, 7), std('#264a2c'), 0, 18, 0, g); place(g, { ...p, y: 0 }); }
@@ -268,14 +263,8 @@ export function buildLandmarks() {
       // the two concrete lion statues guarding the Stanley Park (south) end of the bridge
       const hw = Math.max(...lg.map(r => r.w)) / 2, stone = std('#cfc8b8', { roughness: 0.85 }), dark = std('#a39b88', { roughness: 0.9 });
       for (const s of [-1, 1]) {
-        const x = B.x + ux * 6 + px * s * (hw + 3.2), z = B.z + uz * 6 + pz * s * (hw + 3.2), y = surfaceY(x, z, 1e9), g = new THREE.Group();
-        addMesh(new THREE.BoxGeometry(2.2, 1.8, 4.2), dark, 0, 0.9, 0, g);   // pedestal
-        addMesh(new THREE.BoxGeometry(1.5, 0.9, 2.6), stone, 0, 2.25, 0.3, g);   // lying body
-        addMesh(new THREE.SphereGeometry(0.85, 10, 8).scale(1, 1.05, 0.9), stone, 0, 3.0, -1.15, g);   // maned head
-        addMesh(new THREE.BoxGeometry(0.62, 0.45, 0.6), stone, 0, 2.85, -1.85, g);   // muzzle
-        for (const p of [-0.42, 0.42]) addMesh(new THREE.BoxGeometry(0.38, 0.3, 1.3), stone, p, 1.95, -1.6, g);   // front paws
-        addMesh(new THREE.CylinderGeometry(0.1, 0.12, 1.6, 6).rotateX(Math.PI / 2), stone, 0.55, 1.95, 1.9, g);   // tail
-        g.position.set(x, y, z); g.rotation.y = Math.atan2(ux, uz); scene.add(g);   // facing the bridge
+        const x = B.x + ux * 6 + px * s * (hw + 3.2), z = B.z + uz * 6 + pz * s * (hw + 3.2), y = surfaceY(x, z, 1e9), g = kitMesh(gateLion);   // Charles Marega's couchant lions (artfamous.js)
+        g.position.set(x, y, z); g.rotation.y = Math.atan2(ux, uz) + Math.PI; scene.add(g);   // facing the bridge
       }    } }
 
   // Dude Chilling Park (Guelph Park, Mount Pleasant) - the famous joke sign
