@@ -959,6 +959,12 @@ export const SECRETS = [
   ['pal', 'Licensed', 'You passed the firearms safety course and got your PAL.'],
   ['firsthunt', 'Clean, Legal Harvest', 'A legal hunt: licence, tag, season, the right animal. Meat to the food bank.'],
   ['collared', 'Wildlife Biologist', 'You darted an animal and fitted a research GPS collar.'],
+  ['bearspray', 'Spray, Don\'t Pray', 'You stopped a bear with bear spray: the thing that really works.'],
+  ['drencher', 'Summer Hero', 'You soaked a stranger on a hot day and they LOVED it.'],
+  ['armory', 'First Purchase', 'You bought your first gun at a real gun counter.'],
+  ['arsenal', 'The Collector', 'You own 8 different guns.'],
+  ['mayday', 'Mayday', 'You brought an aircraft down. Every news chopper in BC is on its way.'],
+  ['longshot', 'Over a Kilometre', 'You hit something more than 1 km away.'],
 ];
 const SECRET_IDS = new Set(SECRETS.map(s => s[0]));
 export function discover(id) {

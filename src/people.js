@@ -390,12 +390,13 @@ export function updatePeds(dt, px, pz, py) {
     const dP = Math.hypot(p.x - px, p.z - pz);
     p.visible = dP < 200;
     if (p.state === 'xwait' || p.state === 'xcross') { updateCrosser(p, dt); continue; }
-    if (p.state === 'down') { p.timer -= dt; p.amp = 0; if (p.timer < 0) { p.state = 'walk'; say(p, pick(OUCH)); } continue; }
+    if (p.state === 'dead') { p.timer -= dt; p.amp = 0; if (p.timer < 0) { p.keep = false; p.x = 1e6; } continue; }   // shot (guns.js): lies there until paramedics take them away
+    if (p.state === 'down') { p.timer -= dt; p.amp = 0; if (p.timer < 0) { if (p.after === 'flee') { p.state = 'flee'; p.timer = 9; } else { p.state = 'walk'; say(p, p.after === 'groggy' ? pick(['…huh? Where am I?', 'Was I napping on the SIDEWALK?', 'Who drew on my face?']) : pick(OUCH)); } p.after = null; } continue; }
     if (p.state === 'flee') {
       p.timer -= dt; const ang = Math.atan2(p.x - px, p.z - pz);
-      p.x += Math.sin(ang) * 5.5 * dt; p.z += Math.cos(ang) * 5.5 * dt; p.yaw = Math.atan2(-Math.sin(ang), -Math.cos(ang));
+      const fs_ = p.limp ? 1.6 + Math.abs(Math.sin(p.phase)) * 1.4 : 5.5; p.x += Math.sin(ang) * fs_ * dt; p.z += Math.cos(ang) * fs_ * dt;   /* limp = leg wound (guns.js): slow, uneven */ p.yaw = Math.atan2(-Math.sin(ang), -Math.cos(ang));
       collideBuildings(p, 0.35); p.y = surfaceY(p.x, p.z, p.y);
-      p.phase += dt * 11; p.amp = 0.9;
+      p.phase += dt * (p.limp ? 6 : 11); p.amp = p.limp ? 0.5 : 0.9;
       if (p.timer < 0) { const nr = nearestRoad(p.x, p.z, 40, r => isWalkType(r.t)); if (nr) { p.state = 'walk'; placeOnEdge(p, nr.e, 1, nr.t * nr.e.len); } else p.timer = 1; }
       continue;
     }
@@ -429,12 +430,13 @@ export function scarePeds(x, z, rad, hitSpeed = 0, hitRad = 1.4) {
   let hits = 0;
   for (const p of peds) {
     const d = Math.hypot(p.x - x, p.z - z);
+    if (p.state === 'dead') continue;
     if (hitSpeed > 4 && d < hitRad && p.state !== 'down') { p.state = 'down'; p.timer = 4; hits++; say(p, 'AAAH!'); continue; }
     if (d < rad && p.state === 'walk') { p.state = 'flee'; p.timer = R(2, 4); if (Math.random() < 0.4) say(p, pick(['Whoa!', 'Sorry!', 'Watch out!', 'Eek!', 'Slow down!'])); }
   }
   return hits;
 }
-export function nearestPed(x, z, rad) { let b = null, bd = rad; for (const p of peds) { const d = Math.hypot(p.x - x, p.z - z); if (d < bd && p.state !== 'down') { bd = d; b = p; } } return b; }
+export function nearestPed(x, z, rad) { let b = null, bd = rad; for (const p of peds) { const d = Math.hypot(p.x - x, p.z - z); if (d < bd && p.state !== 'down' && p.state !== 'dead') { bd = d; b = p; } } return b; }
 export function talkTo(p) { p.state = 'talk'; p.timer = 3.5; say(p, pick(LINES), 3500); }
 export function hitPedsInFront(x, z, yaw, reach = 2.2) {
   let hit = 0; const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
@@ -468,7 +470,7 @@ export function updateZombies(dt, pl) {
     if (zb.state === 'dead') { zb.timer -= dt; zb.amp = 0; if (zb.timer < 0) zombies.splice(i, 1); continue; }
     if (!inZone && !zb.keep) { zombies.splice(i, 1); continue; }
     let tx, tz, sp;
-    if (d < 32 && !pl.flying) { tx = px; tz = pz; sp = (G.night > 0.5 ? 3.4 : 2.3); if (Math.random() < dt * 0.15) say(zb, pick(ZLINES), 2200, 'zombie'); }
+    if (d < 32 && !pl.flying) { tx = px; tz = pz; sp = (G.night > 0.5 ? 3.4 : 2.3) * (zb.slowT > 0 ? 0.25 : 1);   /* slowT = bear spray (guns.js) */ if (Math.random() < dt * 0.15) say(zb, pick(ZLINES), 2200, 'zombie'); }
     else {
       zb.timer -= dt; if (zb.timer < 0) { zb.timer = R(2, 6); zb.wx = zb.x + R(-20, 20); zb.wz = zb.z + R(-20, 20); }
       if (Math.hypot(zb.x - ZONE.x, zb.z - ZONE.z) > ZONE.r && !zb.keep) { zb.wx = ZONE.x; zb.wz = ZONE.z; }

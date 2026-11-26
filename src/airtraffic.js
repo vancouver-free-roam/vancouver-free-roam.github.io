@@ -613,8 +613,10 @@ function spawnBiplane() {
 
 // ---------- update loop ----------
 let lastT = 0;
+export const airHooks = {};   // guns.js plugs in what a damaged / shot-down aircraft does
 function stepCraft(c, dt) {
   c.d = c.g.position.distanceTo(camera.position);
+  if (c.shot && airHooks.shot) { airHooks.shot(c, dt); return; }   // shot down (guns.js): falling, burning, crashing
   if (c.route) {
     const mult = c.mult ? c.mult() : 1;
     c.s += c.v * dt * mult + (c.v < 0.5 ? 0.5 * dt : 0);

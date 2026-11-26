@@ -1,39 +1,73 @@
-// Guns: a parody outdoors shop + shooting range, aiming over the shoulder (or first person on C), hitscan bullets,
-// shotgun pellets, paintball + tranquilliser darts (real arcs), targets, clay pigeons, breakable street props,
-// Fright Nights zombies and BC-rules hunting (licence, tags, seasons, legal species; poaching = a conservation fine).
-// People are NEVER hurt: aiming at someone makes them scream and run, pulling the trigger on them is blocked
-// (karma loss + a police fine), and the bullet never leaves the gun.
-// Keys: O = draw / holster, 1-6 = pick a gun, R = reload, right mouse = aim (scope on the rifle), left click = shoot.
+// Guns: gun counters at real gun shops + a parody outdoors shop with a shooting range, aiming over the shoulder (or
+// first person on C), hitscan bullets with damage + penetration, shotgun pellets, arrows/bolts/darts/flares/paint/
+// water/foam as real arcs, bear spray as a cone. Targets, clay pigeons, breakable street props (by weapon power),
+// vehicles (holes, smoke, panicking drivers), Fright Nights zombies, BC-rules hunting (licence, tags, seasons, legal
+// species, weapon class; poaching = a conservation fine) and people: bullets hurt or kill pedestrians, tranq darts put
+// them to sleep, bear spray stuns them, and the police come (police.js wanted stars). Children and the Downtown
+// Eastside characters are never targets (the shot is blocked).
+// Keys: O = draw / holster, 1-9 / 0 = pick a gun (press again to cycle that slot), mouse wheel = next gun,
+// R = reload, right mouse = aim (scope on the rifles), left click = shoot (hold to draw a bow).
 import * as THREE from 'three';
 import { G, scene, camera, std, addMesh, canvasTex, depthBias, tapped, key, clamp, lerp, pick, R, toXZ, wrapAngle } from './core.js';
 import { groundY, isWater, waterLevel, heightAt } from './terrain.js';
 import { buildingAt, walkY, surfaceY, inRoadway, nearestRoad } from './city.js';
 import { peds, zombies, zstats, say, makeHuman, ZONE } from './people.js';
-import { vehicles } from './vehicles.js';
+import { vehicles, knock } from './vehicles.js';
 import { _colliderGrids, collideStatic, setColliders } from './colliders.js';
 import { _fauna } from './fauna.js';
 import { _dtes } from './dtes.js';
 import { OWN, spend } from './shops.js';
 import { ui } from './ui.js';
-import { beep, noise } from './sound.js';
+import { beep, noise, swish } from './sound.js';
 import { discover, activeMission, setWaypoint } from './missions.js';
 import { camModeNow } from './player.js';
+import { WANTED, addCrime, hurtCop, initPolice, updatePolice } from './police.js';
+import { _air, airHooks } from './airtraffic.js';
 
 let player = null;
 const money = n => '$' + Math.round(n).toLocaleString('en-CA');
 
 // ---------- the guns ----------
-// mag = rounds per load, rate = s between shots, spread = radians at the hip (ads = aimed), pellets, proj = a slow
-// projectile with gravity (m/s), kick = recoil (rad), ammo = which box it eats
+// mag = rounds per load, rate = s between shots, spread = radians at the hip (ads = aimed), dmg = damage per hit
+// (a person has 100), pen = how many bodies/thin things a round goes through, power = what it can smash (1 bins and
+// bottles … 4 lamp posts), fx = what kind of hit it is, proj = a slow projectile (m/s) with gravity `grav` (×g),
+// kick = recoil (rad), ammo = which box it eats, cls = hunting class (big = big game, small = grouse/hare only)
 export const GUNS = {
-  pistol: { name: 'Range rental pistol', icon: '🔫', slot: 1, mag: 15, rate: 0.16, reload: 1.3, spread: 0.02, ads: 0.006, range: 120, kick: 0.035, ammo: '9mm', snd: 'pistol', rental: true },
-  rifle: { name: 'Tikka-Tikka T3 hunting rifle', icon: '🎯', slot: 2, mag: 4, rate: 1.0, reload: 2.2, spread: 0.015, ads: 0.0008, range: 450, kick: 0.09, ammo: '308', snd: 'rifle', price: 1200, scope: true, pal: true, big: true },
-  shotgun: { name: 'Mossbergy 500 pump shotgun', icon: '💥', slot: 3, mag: 6, rate: 0.75, reload: 2.6, spread: 0.045, ads: 0.035, pellets: 9, range: 70, kick: 0.11, ammo: '12ga', snd: 'shotgun', price: 650, pal: true },
-  paint: { name: 'Splat-Tastic paintball marker', icon: '🎨', slot: 4, mag: 20, rate: 0.11, reload: 1.6, spread: 0.03, ads: 0.012, proj: 85, range: 90, kick: 0.012, ammo: 'paint', snd: 'paint', price: 180, auto: true },
-  tranq: { name: 'Snooze Cruise tranquilliser rifle', icon: '💤', slot: 5, mag: 1, rate: 0.6, reload: 1.8, spread: 0.02, ads: 0.003, proj: 70, range: 80, kick: 0.03, ammo: 'dart', snd: 'tranq', price: 400 },
-  golden: { name: 'The Golden Goose', icon: '✨', slot: 6, mag: 7, rate: 0.2, reload: 0.9, spread: 0.012, ads: 0.002, range: 300, kick: 0.04, ammo: null, snd: 'golden', golden: true },
+  pistol: { name: 'Range rental pistol', icon: '🔫', slot: 1, mag: 15, rate: 0.16, reload: 1.3, spread: 0.02, ads: 0.006, range: 120, kick: 0.035, ammo: '9mm', snd: 'pistol', rental: true, dmg: 40, pen: 0, power: 2, fx: 'bullet', desc: '9 mm semi-auto. Quick, light recoil. Range use only.' },
+  golden: { name: 'The Golden Goose', icon: '✨', slot: 1, mag: 7, rate: 0.2, reload: 0.9, spread: 0.012, ads: 0.002, range: 300, kick: 0.04, ammo: null, snd: 'golden', golden: true, dmg: 200, pen: 2, power: 4, fx: 'bullet', desc: 'Gold-plated, one of a kind. Unlimited ammo, absurd power.' },
+  rifle: { name: 'Tikka-Tikka T3 hunting rifle', icon: '🎯', slot: 2, mag: 4, rate: 1.0, reload: 2.2, spread: 0.015, ads: 0.0008, range: 800, kick: 0.09, ammo: '308', snd: 'rifle', price: 1200, scope: true, zooms: [14, 9, 5], pal: true, dmg: 130, pen: 1, power: 3, fx: 'bullet', cls: 'big', desc: '.308 bolt-action with a 3-9× scope. The classic BC deer rifle.' },
+  magnum: { name: 'Wackley-Richards .375 "Bear Necessity"', icon: '🐘', slot: 2, mag: 3, rate: 1.35, reload: 2.8, spread: 0.02, ads: 0.001, range: 900, kick: 0.17, ammo: '375', snd: 'magnum', price: 2600, scope: true, zooms: [12, 7], pal: true, dmg: 240, pen: 3, power: 4, fx: 'bullet', cls: 'big', push: 1.6, desc: 'Dangerous-game magnum. Punches through 3 things, rocks parked cars, snaps lamp posts. Kicks like a moose.' },
+  sniper: { name: 'Long Shot .338 "Bowen Island Express"', icon: '🔭', slot: 2, mag: 5, rate: 1.5, reload: 3.0, spread: 0.03, ads: 0.0002, range: 2200, kick: 0.13, ammo: '338', snd: 'sniper', price: 5200, scope: true, zooms: [16, 8, 4, 2, 1.1], pal: true, dmg: 260, pen: 2, power: 4, fx: 'bullet', cls: 'big', desc: 'Long-range precision rifle: 2 km reach, a 5-step zoom scope (mouse wheel while aiming), useless from the hip. Shoots down aircraft from the ground.' },
+  shotgun: { name: 'Mossbergy 500 pump shotgun', icon: '💥', slot: 3, mag: 6, rate: 0.75, reload: 2.6, spread: 0.045, ads: 0.035, pellets: 9, range: 70, kick: 0.11, ammo: '12ga', snd: 'shotgun', price: 650, pal: true, dmg: 17, pen: 0, power: 3, fx: 'pellet', cls: 'small', falloff: 25, desc: '9 pellets per shell: brutal up close, weak past 25 m. Clays, grouse, zombies.' },
+  rugrat: { name: 'Rugrat 10/22 (.22 LR)', icon: '🐿️', slot: 4, mag: 10, rate: 0.11, reload: 1.4, spread: 0.012, ads: 0.002, range: 150, kick: 0.015, ammo: '22', snd: 'rimfire', price: 380, pal: true, dmg: 26, pen: 0, power: 1, fx: 'bullet', cls: 'small', desc: 'Tiny .22: cheap ammo, no recoil, fast follow-ups. Cans, hares, grouse. Too weak for big game.' },
+  bow: { name: 'Bow-ner Grade compound bow', icon: '🏹', slot: 5, mag: 1, rate: 0.35, reload: 0.7, spread: 0.01, ads: 0.003, range: 120, kick: 0.01, ammo: 'arrow', snd: 'bow', price: 750, charge: true, proj: 85, grav: 1, dmg: 120, pen: 0, power: 1, fx: 'arrow', cls: 'big', silent: true, desc: 'Hold the trigger to draw (a full draw = faster, flatter, harder), let go to shoot. Silent. Arrows stick where they land.' },
+  crossbow: { name: 'Cross Country crossbow', icon: '🎯', slot: 5, mag: 1, rate: 0.4, reload: 2.6, spread: 0.008, ads: 0.0015, range: 140, kick: 0.04, ammo: 'bolt', snd: 'crossbow', price: 950, proj: 105, grav: 0.8, dmg: 160, pen: 1, power: 2, fx: 'arrow', cls: 'big', scope: true, zoom: 24, silent: true, desc: 'Cocked bolt, red-dot scope, near-silent. Slow to reload, hits hard.' },
+  tranq: { name: 'Snooze Cruise tranquilliser rifle', icon: '💤', slot: 6, mag: 1, rate: 0.6, reload: 1.8, spread: 0.02, ads: 0.003, proj: 70, grav: 0.6, range: 80, kick: 0.03, ammo: 'dart', snd: 'tranq', price: 400, dmg: 0, power: 0, fx: 'dart', desc: 'Puts animals (and people, and police…) to sleep. Fit research collars on sleeping wildlife.' },
+  flare: { name: 'Orion\'s Belt flare pistol', icon: '🎆', slot: 7, mag: 1, rate: 0.5, reload: 1.5, spread: 0.02, ads: 0.01, proj: 48, grav: 0.35, range: 200, kick: 0.05, ammo: 'flare', snd: 'flare', price: 120, dmg: 30, power: 0, fx: 'flare', desc: 'A marine distress flare: a red fireball that lights up the night for 25 s and scares everything nearby.' },
+  spray: { name: 'Counter Insult bear spray', icon: '🌶️', slot: 8, mag: 100, rate: 0.06, reload: 1.2, spread: 0, ads: 0, range: 9, kick: 0, ammo: 'spray', snd: 'spray', price: 55, auto: true, cone: 0.32, dmg: 0, power: 0, fx: 'spray', perShot: 5, desc: 'Capsaicin fog, 9 m cone. Stops a charging bear (what actually works in real life). Stuns people and zombies.' },
+  paint: { name: 'Splat-Tastic paintball marker', icon: '🎨', slot: 9, mag: 20, rate: 0.11, reload: 1.6, spread: 0.03, ads: 0.012, proj: 85, grav: 1, range: 90, kick: 0.012, ammo: 'paint', snd: 'paint', price: 180, auto: true, dmg: 0, power: 0, fx: 'paint', desc: 'Semi-auto paint. Splats everything in colour. Stings.' },
+  water: { name: 'Super Drencher 5000', icon: '💦', slot: 0, mag: 160, rate: 0.03, reload: 2.0, spread: 0.035, ads: 0.02, proj: 21, grav: 1, range: 22, kick: 0, ammo: null, snd: 'water', price: 25, auto: true, dmg: 0, power: 0, fx: 'water', perShot: 1, desc: 'Pump-action water cannon. Refills itself (R). People love it in summer, hate it in winter.' },
+  foam: { name: 'Nerf-Herder foam blaster', icon: '🟠', slot: 0, mag: 12, rate: 0.22, reload: 1.6, spread: 0.03, ads: 0.015, proj: 30, grav: 0.55, range: 40, kick: 0.005, ammo: 'foam', snd: 'foam', price: 30, dmg: 0, power: 0, fx: 'foam', desc: 'Foam darts. Completely harmless, extremely annoying.' },
 };
-const AMMO = { '9mm': ['9 mm (range box of 50)', 50, 0], '308': ['.308 Win (box of 20)', 20, 40], '12ga': ['12 ga shells (box of 25)', 25, 20], paint: ['Paintballs (bag of 100)', 100, 15], dart: ['Tranquilliser darts (pack of 10)', 10, 30] };
+const AMMO = {
+  '9mm': ['9 mm (range box of 50)', 50, 0], '308': ['.308 Win (box of 20)', 20, 40], '375': ['.375 H&H (box of 20)', 20, 95], '338': ['.338 Lapua (box of 10)', 10, 120], '12ga': ['12 ga shells (box of 25)', 25, 20], '22': ['.22 LR (brick of 100)', 100, 12],
+  arrow: ['Carbon arrows (6)', 6, 45], bolt: ['Crossbow bolts (6)', 6, 55], dart: ['Tranquilliser darts (pack of 10)', 10, 30], flare: ['Flares (4)', 4, 25], spray: ['Bear spray can', 100, 50], paint: ['Paintballs (bag of 100)', 100, 15], foam: ['Foam darts (24)', 24, 6],
+};
+// what each shop sells
+const STOCK = {
+  all: Object.keys(GUNS).filter(k => GUNS[k].price),
+  gun: ['rifle', 'magnum', 'sniper', 'shotgun', 'rugrat', 'bow', 'crossbow', 'spray', 'flare'],
+  hunt: ['rifle', 'shotgun', 'rugrat', 'bow', 'crossbow', 'spray', 'tranq'],
+  sport: ['shotgun', 'rugrat', 'bow', 'spray', 'paint', 'foam', 'water'],
+  surplus: ['flare', 'spray', 'crossbow', 'paint', 'water', 'foam'],
+};
+// real gun / hunting shops from OpenStreetMap (shop=weapons / hunting; the name is the real map label)
+const SHOPS = [
+  { name: 'Reliable Gun', at: [49.2559533, -123.090128], stock: 'gun', tags: true, note: 'The gun counter on Fraser St.' },
+  { name: 'Italian Sporting Goods', at: [49.2772649, -123.043828], stock: 'hunt', tags: true, note: 'East Hastings: shotguns, hunting gear and strong opinions about espresso.' },
+  { name: 'West Coast Hunting Supplies', at: [49.1832256, -123.1359476], stock: 'hunt', tags: true, note: 'Richmond: bows, crossbows and a well-thumbed regulations synopsis.' },
+  { name: 'Warriors & Wonders', at: [49.260846, -123.115829], stock: 'sport', note: 'Swords on the wall, foam darts in the bargain bin.' },
+];
 // BC hunting, as a game: legal species, their season(s) and the tag you need (null = the licence is enough)
 const LEGAL = {
   buck: { tag: 'deer', seasons: ['fall'], name: 'Black-tailed deer (buck)', big: true },
@@ -44,7 +78,9 @@ const LEGAL = {
   hare: { tag: null, seasons: ['fall', 'winter'], name: 'Snowshoe hare' },
 };
 const TAGS = { deer: ['Deer tag (antlered bucks only)', 15], elk: ['Elk tag (bulls only)', 25], bear: ['Black bear tag', 80], moose: ['Moose tag', 50] };
-const PROTECTED = ['grizzly', 'vimarmot', 'seaotter', 'owl', 'sealion', 'marten', 'lynx', 'beaver', 'otter', 'pika', 'ptarmigan', 'raven', 'woodduck', 'mallard', 'crow', 'gull', 'cougar', 'wolf', 'goat', 'bighorn', 'bobcat', 'coyote', 'porcupine', 'skunk', 'marmot', 'rabbit', 'dsquirrel', 'deer', 'elk'];
+// how much a hit takes to drop each animal (a person = 100)
+const HP = { bear: 220, grizzly: 380, moose: 420, elk: 260, bullelk: 280, deer: 100, buck: 110, goat: 130, bighorn: 140, cougar: 110, wolf: 100, sealion: 320, coyote: 55, bobcat: 50, lynx: 50, porcupine: 35, skunk: 25, beaver: 45, otter: 40, seaotter: 40, marmot: 30, vimarmot: 30, grouse: 18, ptarmigan: 16, hare: 18, rabbit: 15 };
+const animalHp = a => HP[a.id] ?? (a.S?.small ? 15 : 50);
 const WHY = {
   grizzly: 'Grizzly hunting has been closed in BC since 2017.', vimarmot: 'Vancouver Island marmots are one of the most endangered mammals on Earth.', seaotter: 'Sea otters are a protected species at risk.',
   deer: 'That was a doe: your tag is for antlered bucks only (antlerless deer need a special draw).', elk: 'That was a cow elk: your tag is bulls only.', cougar: 'No cougar tags are sold here.', goat: 'Mountain goats are limited-entry only: you don\'t have that draw.',
@@ -83,6 +119,45 @@ function gunModel(id) {
     box(g, WOOD, 0.045, 0.1, 0.32, 0, -0.015, 0.2); box(g, MET, 0.048, 0.07, 0.24, 0, 0.03, -0.05);
     cyl(g, MET, 0.013, 0.56, 0, 0.05, -0.45); cyl(g, MET, 0.011, 0.44, 0, 0.02, -0.4); cyl(g, WOOD, 0.022, 0.18, 0, 0.022, -0.32);
     muz = new THREE.Vector3(0, 0.05, -0.73);
+  } else if (id === 'sniper') {
+    const ST = std('#4a4f3a', { roughness: 0.7 });
+    box(g, ST, 0.05, 0.12, 0.34, 0, -0.02, 0.2); box(g, ST, 0.05, 0.06, 0.42, 0, 0, -0.17); box(g, MET, 0.05, 0.06, 0.26, 0, 0.035, -0.04); cyl(g, MET, 0.014, 0.75, 0, 0.045, -0.66, 0.011); cyl(g, BLK, 0.02, 0.08, 0, 0.045, -1.06);
+    cyl(g, BLK, 0.03, 0.42, 0, 0.13, -0.06); cyl(g, BLK, 0.04, 0.08, 0, 0.13, -0.3, 0.03); cyl(g, BLK, 0.035, 0.05, 0, 0.13, 0.17, 0.03);
+    for (const sx of [-1, 1]) box(g, MET, 0.012, 0.2, 0.012, sx * 0.04, -0.07, -0.34, -0.3 * sx);   // bipod legs
+    muz = new THREE.Vector3(0, 0.045, -1.1);
+  } else if (id === 'magnum' || id === 'rugrat') {
+    const big = id === 'magnum', ST = big ? std('#3a2a1a', { roughness: 0.5 }) : std('#2d3748', { roughness: 0.7 });
+    box(g, ST, 0.05, big ? 0.1 : 0.08, 0.32, 0, -0.01, 0.2); box(g, ST, 0.045, 0.05, big ? 0.4 : 0.3, 0, 0, -0.16); box(g, MET, 0.048, 0.06, 0.22, 0, 0.035, -0.04);
+    cyl(g, MET, big ? 0.015 : 0.009, big ? 0.5 : 0.38, 0, 0.045, big ? -0.52 : -0.42, big ? 0.012 : 0.009);
+    if (big) { cyl(g, BLK, 0.026, 0.34, 0, 0.12, -0.06); cyl(g, BLK, 0.033, 0.06, 0, 0.12, -0.25, 0.026); box(g, MET, 0.02, 0.02, 0.04, 0, 0.05, -0.79); }
+    else box(g, BLK, 0.035, 0.06, 0.04, 0, -0.04, -0.06);   // rotary magazine
+    muz = new THREE.Vector3(0, 0.045, big ? -0.78 : -0.62);
+  } else if (id === 'bow') {
+    const riser = std('#3a3f2a', { roughness: 0.6 }), cam = std('#222'), str = new THREE.LineBasicMaterial({ color: '#ddd' });
+    box(g, riser, 0.03, 0.26, 0.04, 0, 0.05, -0.12);
+    for (const s of [-1, 1]) { const limb = box(g, BLK, 0.025, 0.36, 0.03, 0, 0.05 + s * 0.3, -0.06, s * 0.35); limb.userData.limb = s; const c = cyl(g, cam, 0.03, 0.02, 0, 0.05 + s * 0.47, 0.0); c.rotation.set(0, Math.PI / 2, 0); }
+    const sg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.52, 0.0), new THREE.Vector3(0, 0.05, 0.02), new THREE.Vector3(0, -0.42, 0.0)]); const line = new THREE.Line(sg, str); line.userData.string = true; g.add(line);
+    const arrow = cyl(g, std('#d69e2e'), 0.004, 0.7, 0, 0.05, -0.33); arrow.userData.arrow = true;
+    muz = new THREE.Vector3(0, 0.05, -0.68);
+  } else if (id === 'crossbow') {
+    box(g, std('#2f3a2a'), 0.04, 0.08, 0.32, 0, -0.01, 0.18); box(g, MET, 0.04, 0.04, 0.5, 0, 0.03, -0.2);
+    const limbs = box(g, BLK, 0.62, 0.03, 0.04, 0, 0.04, -0.42); void limbs; cyl(g, BLK, 0.02, 0.14, 0, 0.09, -0.06);
+    const sg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.31, 0.04, -0.41), new THREE.Vector3(0, 0.05, -0.12), new THREE.Vector3(0.31, 0.04, -0.41)]); g.add(new THREE.Line(sg, new THREE.LineBasicMaterial({ color: '#ddd' })));
+    cyl(g, std('#c53030'), 0.005, 0.4, 0, 0.06, -0.3);
+    muz = new THREE.Vector3(0, 0.06, -0.5);
+  } else if (id === 'flare') {
+    const OR = std('#ed8936', { roughness: 0.4 }); box(g, OR, 0.035, 0.11, 0.05, 0, -0.01, 0.01, 0.2); cyl(g, OR, 0.026, 0.2, 0, 0.055, -0.08); cyl(g, BLK, 0.028, 0.03, 0, 0.055, -0.18);
+    muz = new THREE.Vector3(0, 0.055, -0.2);
+  } else if (id === 'spray') {
+    cyl(g, std('#c53030', { roughness: 0.35 }), 0.03, 0.2, 0, 0.0, -0.05).rotation.set(0, 0, 0); box(g, std('#f6e05e'), 0.062, 0.05, 0.06, 0, 0.0, -0.08); box(g, BLK, 0.02, 0.03, 0.03, 0, 0.0, -0.17);
+    muz = new THREE.Vector3(0, 0.0, -0.19);
+  } else if (id === 'water') {
+    const TK = std('#38b2ac', { roughness: 0.3, transparent: true, opacity: 0.85 }), BOD = std('#f6e05e', { roughness: 0.4 });
+    box(g, BOD, 0.05, 0.08, 0.36, 0, 0.02, -0.12); cyl(g, std('#dd6b20'), 0.02, 0.18, 0, 0.03, -0.38); const tank = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8).scale(1, 0.9, 1.4), TK); tank.position.set(0, 0.11, 0.02); g.add(tank); box(g, std('#805ad5'), 0.04, 0.1, 0.05, 0, -0.04, 0.03, 0.2);
+    muz = new THREE.Vector3(0, 0.03, -0.48);
+  } else if (id === 'foam') {
+    box(g, std('#dd6b20'), 0.05, 0.08, 0.28, 0, 0.02, -0.08); box(g, std('#3182ce'), 0.04, 0.1, 0.05, 0, -0.04, 0.03, 0.2); cyl(g, std('#f6e05e'), 0.03, 0.08, 0, 0.09, -0.06); cyl(g, std('#3182ce'), 0.018, 0.12, 0, 0.03, -0.26);
+    muz = new THREE.Vector3(0, 0.03, -0.32);
   } else {   // paintball marker
     box(g, BLUE, 0.04, 0.07, 0.24, 0, 0.02, -0.05); box(g, BLK, 0.03, 0.1, 0.04, 0, -0.04, 0.03, 0.2); cyl(g, BLK, 0.016, 0.26, 0, 0.04, -0.3);
     const hop = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8).scale(0.8, 0.9, 1.3), std('#e2e8f0', { transparent: true, opacity: 0.75, roughness: 0.2 })); hop.position.set(0, 0.13, -0.02); g.add(hop);
@@ -144,6 +219,18 @@ const SND = {
   shotgun: () => { noise(0.55, 0.5, 950); beep([52], 0.22, 'sine', 0.3); setTimeout(() => noise(0.9, 0.06, 400), 200); },
   paint: () => { noise(0.06, 0.12, 3800); beep([640], 0.03, 'square', 0.02); },
   tranq: () => { noise(0.14, 0.12, 2200); },
+  magnum: () => { noise(0.9, 0.55, 1100); beep([42], 0.4, 'sine', 0.35); setTimeout(() => noise(1.6, 0.1, 380), 300); setTimeout(() => noise(1.4, 0.05, 260), 900); },
+  sniper: () => { noise(0.6, 0.5, 1800); beep([50], 0.3, 'sine', 0.3); setTimeout(() => noise(2.2, 0.08, 330), 500); setTimeout(() => noise(1.6, 0.04, 220), 1500); },
+  rimfire: () => { noise(0.08, 0.16, 4200); beep([180], 0.04, 'square', 0.03); },
+  bow: () => { swish(0.18, 0.08, 1600, 0.01); beep([95, 70], 0.12, 'sine', 0.1, 0.02); },
+  crossbow: () => { noise(0.06, 0.2, 2500); beep([120, 80], 0.1, 'sine', 0.14, 0.02); swish(0.2, 0.05, 2200, 0.01); },
+  draw: () => beep([140, 160, 180], 0.08, 'sine', 0.02, 0.1),
+  flare: () => { noise(0.18, 0.22, 1600); swish(1.1, 0.06, 900, 0.05); },
+  spray: () => swish(0.12, 0.05, 5200, 0.01),
+  water: () => swish(0.08, 0.025, 2800, 0.01),
+  foam: () => { noise(0.05, 0.06, 1200); beep([520], 0.03, 'sine', 0.02); },
+  hitBody: () => { noise(0.08, 0.14, 380); beep([90], 0.08, 'sine', 0.08); }, metal: () => beep([2400, 1800, 2600], 0.25, 'triangle', 0.03, 0.02), thunk: () => { noise(0.06, 0.16, 700); beep([150], 0.05, 'square', 0.03); },
+  glassCar: () => { noise(0.35, 0.18, 7000); beep([3600, 4400], 0.06, 'triangle', 0.03, 0.03); }, squish: () => swish(0.15, 0.06, 1200, 0.01), boing: () => beep([600, 300], 0.1, 'sine', 0.03, 0.05),
   dry: () => beep([2300], 0.02, 'square', 0.05),
   reload: () => beep([720, 480, 900], 0.04, 'square', 0.04, 0.22), pump: () => { noise(0.08, 0.12, 1200); setTimeout(() => noise(0.08, 0.12, 900), 140); }, bolt: () => beep([500, 800], 0.05, 'square', 0.04, 0.18),
   ding: () => beep([1650, 1655, 1648], 0.7, 'sine', 0.07, 0.01), gong: () => beep([420, 423], 1.4, 'sine', 0.1, 0.01), glass: () => { noise(0.25, 0.16, 6500); beep([3300, 4200, 3800], 0.07, 'triangle', 0.03, 0.03); },
@@ -175,24 +262,35 @@ function animalBox(a) {
   return { y: a.y + H * sc * (a.lie ? 0.55 : 0.95) + (a.stand || 0) * H * sc * 0.6, r: H * sc * 0.42 + 0.08, L: L * sc };
 }
 // people + things with people inside: never hit, only "found" so the shot can be blocked
-function peopleHit(o, d, len) {
+// people (pedestrians, Downtown Eastside characters, police officers). pad > 0 = a fatter test for "pointing at"
+// someone. kid / dtes = never a target (the shot is blocked).
+function peopleHit(o, d, len, pad = 0, s0 = 0, skip = null) {
   let best = null, bt = len;
-  for (const p of peds) { if (p.visible === false || p.x > 1e5 || !near(o, len, p.x, p.z)) continue; const sc = p.sc || 1, t = capsule(o, d, bt, p.x, p.y + 0.25 * sc, p.y + 1.6 * sc, p.z, 0.55); if (t >= 0 && t < bt) { bt = t; best = { kind: 'person', obj: p, t }; } }
-  for (const p of (_dtes.people || [])) { if (p.x === undefined || !near(o, len, p.x, p.z)) continue; const y = p.y ?? walkY(p.x, p.z), t = capsule(o, d, bt, p.x, y + 0.1, y + 1.5, p.z, 0.6); if (t >= 0 && t < bt) { bt = t; best = { kind: 'person', obj: p, t, dtes: true }; } }
-  for (const v of vehicles) { if (!(v.driver || v.ai || v.rider || v.script) || v.driver === player || !near(o, len, v.x, v.z)) continue; const r = Math.min(3, (v.d?.len || 4) * 0.42), t = raySphere(o, d, bt, v.x, (v.y || 0) + 1, v.z, r); if (t >= 0 && t < bt) { bt = t; best = { kind: 'person', obj: v, t, car: true }; } }
+  const take = (t, h) => { if (t >= s0 && t < bt) { bt = t; best = { ...h, t }; } };
+  for (const p of peds) {
+    if (p === skip || p.visible === false || p.x > 1e5 || p.state === 'dead' || !near(o, len, p.x, p.z)) continue; const sc = p.sc || 1, kid = sc < 0.8, lying = p.state === 'down';
+    if (lying) { take(capsule(o, d, bt, p.x, p.y + 0.15, p.y + 0.35, p.z, 0.5 + pad), { kind: 'person', obj: p, kid }); continue; }
+    take(raySphere(o, d, bt, p.x, p.y + 1.6 * sc, p.z, 0.14 * sc + pad), { kind: 'person', obj: p, kid, head: true });
+    take(capsule(o, d, bt, p.x, p.y + 0.2 * sc, p.y + 1.45 * sc, p.z, 0.27 + pad), { kind: 'person', obj: p, kid });
+  }
+  for (const p of (_dtes.people || [])) { if (p.x === undefined || p === skip || !near(o, len, p.x, p.z)) continue; const y = p.y ?? walkY(p.x, p.z); take(capsule(o, d, bt, p.x, y + 0.1, y + 1.5, p.z, 0.45 + pad), { kind: 'person', obj: p, dtes: true }); }
+  for (const c of WANTED.cops) { if (c.hp <= 0 || c === skip || !near(o, len, c.x, c.z)) continue; const lying = c.state === 'sleep' || c.state === 'dead';
+    if (lying) take(capsule(o, d, bt, c.x, c.y + 0.15, c.y + 0.35, c.z, 0.5 + pad), { kind: 'person', obj: c, cop: true });
+    else { take(raySphere(o, d, bt, c.x, c.y + 1.6, c.z, 0.14 + pad), { kind: 'person', obj: c, cop: true, head: true }); take(capsule(o, d, bt, c.x, c.y + 0.2, c.y + 1.45, c.z, 0.27 + pad), { kind: 'person', obj: c, cop: true }); } }
   return best;
 }
-function entityHit(o, d, len) {
+function entityHit(o, d, len, s0 = 0, skip = null) {
   let best = null, bt = len;
-  const take = (t, h) => { if (t >= 0 && t < bt) { bt = t; best = { ...h, t }; } };
-  for (const z of zombies) { if (z.state === 'dead' || !near(o, len, z.x, z.z)) continue; take(raySphere(o, d, bt, z.x, z.y + 1.62, z.z, 0.2), { kind: 'zombie', obj: z, head: true }); take(capsule(o, d, bt, z.x, z.y + 0.3, z.y + 1.45, z.z, 0.36), { kind: 'zombie', obj: z }); }
+  const take = (t, h) => { if (t >= s0 && t < bt) { bt = t; best = { ...h, t }; } };
+  for (const z of zombies) { if (z === skip || z.state === 'dead' || !near(o, len, z.x, z.z)) continue; take(raySphere(o, d, bt, z.x, z.y + 1.62, z.z, 0.2), { kind: 'zombie', obj: z, head: true }); take(capsule(o, d, bt, z.x, z.y + 0.3, z.y + 1.45, z.z, 0.36), { kind: 'zombie', obj: z }); }
   for (const a of _fauna.live) {
-    if (a.vis === false || a.down === 'dead' || !near(o, len, a.x, a.z)) continue; const b = animalBox(a);
+    if (a === skip || a.vis === false || a.down === 'dead' || !near(o, len, a.x, a.z)) continue; const b = animalBox(a);
     if (b.bird || b.L < 0.2) take(raySphere(o, d, bt, a.x, b.y, a.z, b.r), { kind: 'animal', obj: a });
     else { const fx = -Math.sin(a.yaw) * b.L * 0.6, fz = -Math.cos(a.yaw) * b.L * 0.6; _A.set(a.x - fx, b.y, a.z - fz); _B.set(a.x + fx, b.y, a.z + fz); const [s, dist] = segSeg(o, d, bt, _A, _B); if (dist < b.r) take(s, { kind: 'animal', obj: a }); }
   }
-  for (const t of targets) { if (!t.alive || !near(o, len, t.x, t.z)) continue; take(raySphere(o, d, bt, t.x, t.y, t.z, t.r), { kind: 'target', obj: t }); }
-  for (const v of vehicles) { if (v.driver || v.ai || v.rider || v.script || !near(o, len, v.x, v.z) || v.hidden) continue; const r = Math.min(2.6, (v.d?.len || 4) * 0.36); take(raySphere(o, d, bt, v.x, (v.y || 0) + 0.8, v.z, r), { kind: 'vehicle', obj: v }); }
+  for (const t of targets) { if (t === skip || !t.alive || !near(o, len, t.x, t.z)) continue; take(raySphere(o, d, bt, t.x, t.y, t.z, t.r), { kind: 'target', obj: t }); }
+  for (const c of _air.air) { if (c === skip || !c.g.visible || c.remove || c.landedT || !near(o, len, c.g.position.x, c.g.position.z)) continue; take(raySphere(o, d, bt, c.g.position.x, c.g.position.y, c.g.position.z, airR(c) * 0.75), { kind: 'aircraft', obj: c }); }
+  for (const v of vehicles) { if (v === skip || v.driver === 'player' || v === player?.vehicle || !near(o, len, v.x, v.z) || v.hidden) continue; const r = Math.min(2.6, (v.d?.len || 4) * 0.36); take(raySphere(o, d, bt, v.x, (v.y || 0) + 0.8, v.z, r), { kind: 'vehicle', obj: v, occupied: !!(v.driver || v.ai || v.rider || v.script) }); }
   return best;
 }
 // march through the world: ground, water, buildings, solid props
@@ -212,9 +310,9 @@ function worldHit(o, d, s0, s1) {
   }
   return null;
 }
-function castSeg(o, d, len, s0 = 0) {
-  const ppl = peopleHit(o, d, len), ent = entityHit(o, d, len);
-  let best = ent && ent.t >= s0 ? ent : null; if (ppl && ppl.t >= s0 && (!best || ppl.t < best.t)) best = ppl;
+function castSeg(o, d, len, s0 = 0, skipObj = null) {
+  const ppl = peopleHit(o, d, len, 0, s0, skipObj), ent = entityHit(o, d, len, s0, skipObj);
+  let best = ent; if (ppl && (!best || ppl.t < best.t)) best = ppl;
   const w = worldHit(o, d, s0, best ? best.t : len);
   if (w) best = w;
   if (best) best.p = new THREE.Vector3().copy(o).addScaledVector(d, best.t);
@@ -455,19 +553,29 @@ async function quiz(title, Q, n) {
   for (let k = 0; k < qs.length; k++) { const [q, opts, ok] = qs[k]; const i = await ui.dialog(title + ` (${k + 1}/${n})`, q, opts); if (i !== ok) { ui.toast('❌ Not quite', 'The instructor sighs and hands you the manual: "' + opts[ok] + '". Try again any time.', 4500); return false; } }
   return true;
 }
-async function openShop() {
+const stars = (n, of = 5) => '★'.repeat(clamp(Math.round(n), 0, of)) + '☆'.repeat(of - clamp(Math.round(n), 0, of));
+const rating = gd => `power ${stars(gd.dmg >= 200 ? 5 : gd.dmg >= 120 ? 4 : gd.dmg >= 60 || gd.pellets ? 3 : gd.dmg > 0 ? 2 : 0)} · range ${stars(gd.range >= 400 ? 5 : gd.range >= 140 ? 4 : gd.range >= 80 ? 3 : gd.range >= 30 ? 2 : 1)}`;
+async function openShop(shop = null) {
   if (S.busy) return; S.busy = true;
   try {
-    const AR = A(), opts = [], acts = [];
+    const AR = A(), opts = [], acts = [], list = STOCK[shop?.stock || 'all'], title = shop ? '🔫 ' + shop.name : '🦌 Cabbagela\'s Outdoors';
     const add = (t, f) => { opts.push(t); acts.push(f); };
-    if (!AR.pal) add('🪪 Take the safety course → PAL licence ($60)', async () => { if (player.money < 60) return ui.toast('Not enough money', '$60 for the course', 2000); if (await quiz('🪪 Canadian Firearms Safety Course', QUIZ_PAL, 3)) { spend(60); AR.pal = true; ui.toast('🪪 You got your PAL!', 'Possession & Acquisition Licence: you can now buy rifles and shotguns. (The real course is a full day, plus an exam and a background check.)', 6000); discover('pal'); } });
-    for (const id of ['rifle', 'shotgun', 'paint', 'tranq']) { const gd = GUNS[id]; if (AR.guns.includes(id)) continue; add(`${gd.icon} ${gd.name} · ${money(gd.price)}${gd.pal && !AR.pal ? ' (needs PAL)' : ''}`, () => { if (gd.pal && !AR.pal) return ui.toast('🪪 PAL first', 'In Canada you need a Possession & Acquisition Licence to buy a rifle or shotgun. Take the safety course here.', 4000); if (!spend(gd.price)) return; give(id, AMMO[gd.ammo][1]); if (id === 'tranq') AR.research = true; ui.toast('🛍️ ' + gd.name, (id === 'tranq' ? 'Comes with a BC Wildlife Research volunteer card: dart an animal, then press E on it to fit a GPS collar ($60 a collar). ' : '') + `Comes with a ${AMMO[gd.ammo][0]}. Press ${gd.slot} to draw it.`, 5000); }); }
-    for (const [k, [nm, n, pr]] of Object.entries(AMMO)) { if (!pr) continue; const own = Object.keys(GUNS).some(id => GUNS[id].ammo === k && AR.guns.includes(id)); if (own) add(`📦 ${nm} · ${money(pr)}  (have ${AR.ammo[k] || 0})`, () => { if (spend(pr)) AR.ammo[k] = (AR.ammo[k] || 0) + n; }); }
-    if (!AR.licence) add('🦌 Hunter course → BC hunting licence ($32)', async () => { if (player.money < 32) return ui.toast('Not enough money', '', 1500); if (await quiz('🦌 CORE hunter education', QUIZ_CORE, 3)) { spend(32); AR.licence = true; ui.toast('🦌 BC hunting licence', 'Now buy a tag for the animal you want to hunt. Small game (grouse, snowshoe hare) only needs the licence. Read the regulations before you go!', 6000); } });
-    else for (const [k, [nm, pr]] of Object.entries(TAGS)) add(`🏷️ ${nm} · ${money(pr)}${AR.tags[k] ? ` (have ${AR.tags[k]})` : ''}`, () => { if (spend(pr)) { AR.tags[k] = (AR.tags[k] || 0) + 1; ui.toast('🏷️ ' + nm, 'One tag = one animal. Cancel it right after a harvest (the game does that for you).', 3000); } });
-    add('📖 Read the hunting regulations (+ where to hunt)', () => { ui.dialog('📖 BC Hunting & Trapping Regulations (game version)', 'Open seasons: <b>buck deer</b>, <b>bull elk</b>, <b>moose</b> + <b>grouse</b> in the fall; <b>black bear</b> in spring and fall (never cubs, never a mother with cubs, never a white "spirit" bear); <b>snowshoe hare</b> fall + winter.<br><br>Closed: grizzlies (since 2017), does, cows, mountain goats and anything else.<br>No hunting in town, in city parks, from a road or a vehicle, or with a handgun. Big game needs a rifle.<br><br>Poaching = a conservation officer fine, and the serious stuff gets your gun seized.<br><br>Good spot: Crown land in the Squamish valley, north of town. (We\'ll set a waypoint.)', ['📍 Set the waypoint', 'OK']).then(i => { if (i === 0) setWaypoint({ x: toXZ(49.795, -123.12)[0], z: toXZ(49.795, -123.12)[1] }); }); });
+    if (!AR.pal && list.some(id => GUNS[id].pal)) add('🪪 Take the safety course → PAL licence ($60)', async () => { if (player.money < 60) return ui.toast('Not enough money', '$60 for the course', 2000); if (await quiz('🪪 Canadian Firearms Safety Course', QUIZ_PAL, 3)) { spend(60); AR.pal = true; ui.toast('🪪 You got your PAL!', 'Possession & Acquisition Licence: you can now buy rifles and shotguns. (The real course is a full day, plus an exam and a background check.)', 6000); discover('pal'); } });
+    const buy = id => { const gd = GUNS[id]; if (gd.pal && !AR.pal) return ui.toast('🪪 PAL first', 'In Canada you need a Possession & Acquisition Licence to buy a rifle or shotgun. Take the safety course at the counter.', 4000); if (!spend(gd.price)) return; give(id, gd.ammo ? AMMO[gd.ammo][1] : 0); if (id === 'tranq') AR.research = true;
+      ui.toast('🛍️ ' + gd.name, gd.desc + ` Press ${gd.slot} (or O) to draw it.` + (id === 'tranq' ? ' Comes with a BC Wildlife Research volunteer card: E on a sleeping animal = GPS collar ($60).' : ''), 6500); discover('armory'); if (AR.guns.length >= 8) discover('arsenal'); };
+    const mine = list.filter(id => !AR.guns.includes(id));
+    if (mine.length) add(`🔫 Guns & gear (${mine.length} for sale)…`, async () => {
+      const i = await ui.dialog(title + ': the rack', mine.map(id => `<b>${GUNS[id].icon} ${GUNS[id].name}</b> · ${money(GUNS[id].price)}${GUNS[id].pal && !AR.pal ? ' <i>(needs PAL)</i>' : ''}<br><small>${rating(GUNS[id])} · ${GUNS[id].desc}</small>`).join('<br>'), [...mine.map(id => `${GUNS[id].icon} ${GUNS[id].name.split(' (')[0]} ${money(GUNS[id].price)}`), '↩️ Back']);
+      if (i < mine.length) buy(mine[i]);
+    });
+    for (const [k, [nm, n, pr]] of Object.entries(AMMO)) { if (!pr) continue; const own = Object.keys(GUNS).some(id => GUNS[id].ammo === k && AR.guns.includes(id)); if (own) add(`📦 ${nm} · ${money(pr)}  (have ${AR.ammo[k] || 0})`, () => { if (spend(pr)) { AR.ammo[k] = (AR.ammo[k] || 0) + n; SND.reload(); } }); }
+    if (!shop || shop.tags) {
+      if (!AR.licence) add('🦌 Hunter course → BC hunting licence ($32)', async () => { if (player.money < 32) return ui.toast('Not enough money', '', 1500); if (await quiz('🦌 CORE hunter education', QUIZ_CORE, 3)) { spend(32); AR.licence = true; ui.toast('🦌 BC hunting licence', 'Now buy a tag for the animal you want to hunt. Small game (grouse, snowshoe hare) only needs the licence. Read the regulations before you go!', 6000); } });
+      else for (const [k, [nm, pr]] of Object.entries(TAGS)) add(`🏷️ ${nm} · ${money(pr)}${AR.tags[k] ? ` (have ${AR.tags[k]})` : ''}`, () => { if (spend(pr)) { AR.tags[k] = (AR.tags[k] || 0) + 1; ui.toast('🏷️ ' + nm, 'One tag = one animal. Cancel it right after a harvest (the game does that for you).', 3000); } });
+      add('📖 Read the hunting regulations (+ where to hunt)', () => { ui.dialog('📖 BC Hunting & Trapping Regulations (game version)', 'Open seasons: <b>buck deer</b>, <b>bull elk</b>, <b>moose</b> + <b>grouse</b> in the fall; <b>black bear</b> in spring and fall (never cubs, never a mother with cubs, never a white "spirit" bear); <b>snowshoe hare</b> fall + winter.<br><br>Closed: grizzlies (since 2017), does, cows, mountain goats and anything else.<br>No hunting in town, in city parks, from a road or a vehicle, or with a handgun. Big game: a centrefire rifle, a bow or a crossbow. Small game: a shotgun or a .22.<br><br>Poaching = a conservation officer fine, and the serious stuff gets your gun seized.<br><br>Good spot: Crown land in the Squamish valley, north of town. (We\'ll set a waypoint.)', ['📍 Set the waypoint', 'OK']).then(i => { if (i === 0) setWaypoint({ x: toXZ(49.795, -123.12)[0], z: toXZ(49.795, -123.12)[1] }); }); });
+    }
     add('👋 Just looking', () => { });
-    const i = await ui.dialog('🦌 Cabbagela\'s Outdoors', 'Camo, coolers and every shade of fleece. <i>Handguns: none for sale (Canada froze handgun sales in 2022). The range next door rents one.</i><br>You have ' + money(player.money) + '.', opts);
+    const i = await ui.dialog(title, (shop ? shop.note : 'Camo, coolers and every shade of fleece.') + ' <i>Handguns: none for sale (Canada froze handgun sales in 2022).</i><br>You have ' + money(player.money) + '.', opts);
     S.busy = false; await acts[i]?.();
   } finally { S.busy = false; }
 }
@@ -482,13 +590,23 @@ function reloadNow(id, silent) { const gd = GUNS[id], AR = A(); const need = gd.
 function draw(id) {
   if (!id || !A().guns.includes(id)) return;
   if (player.vehicle || player.transit || player.swimming || G.dialogOpen) { ui.toast('Not now', player.vehicle ? 'Guns stay holstered in vehicles (BC law: unloaded and out of sight).' : '', 1500); return; }
-  ensureModels(); S.out = id; A().last = id; player.gunOut = true; S.cool = 0.35; S.reloadT = 0; if (S.mag[id] === undefined) { S.mag[id] = 0; reloadNow(id, true); }
+  ensureModels(); S.out = id; A().last = id; player.gunOut = true; S.cool = 0.35; S.reloadT = 0; S.charge = 0; if (S.mag[id] === undefined) { S.mag[id] = 0; reloadNow(id, true); }
   for (const k in handGuns) handGuns[k].visible = k === id; for (const k in viewGuns) viewGuns[k].visible = k === id;
   S.aimP = clamp(G.camPitch - 0.25, -1.1, 1.1); SND.reload();
-  if (!S.hinted) { S.hinted = true; ui.toast(GUNS[id].icon + ' ' + GUNS[id].name, 'Mouse = aim · click = shoot · right mouse = aim down sights' + (GUNS[id].scope ? ' (scope)' : '') + ' · R = reload · O = holster · 1-6 = switch', 5000); }
+  const gd = GUNS[id];
+  if (!S.hinted) { S.hinted = true; ui.toast(gd.icon + ' ' + gd.name, 'Mouse = aim · click = shoot · right mouse = aim down sights' + (gd.scope ? ' (scope)' : '') + ' · R = reload · O = holster · 1-9, 0 or the mouse wheel = switch', 5500); }
+  else ui.toast(gd.icon + ' ' + gd.name, rating(gd), 1200);
+  return true;
 }
-function holster() { if (!S.out) return; S.out = null; player.gunOut = false; S.ads = 0; for (const k in handGuns) handGuns[k].visible = false; if (viewGrp) viewGrp.visible = false; setHud(); }
-function startReload() { const id = S.out, gd = GUNS[id]; if (!id || S.reloadT > 0 || S.mag[id] >= gd.mag) return; if (gd.ammo && !(A().ammo[gd.ammo] > 0)) { SND.dry(); ui.toast('Out of ammo', gd.rental ? 'Buy another box at the range desk.' : 'Buy more at Cabbagela\'s Outdoors (🦌 on the map).', 2000); return; } S.reloadT = gd.reload; id === 'shotgun' ? SND.pump() : id === 'rifle' ? SND.bolt() : SND.reload(); }
+function holster() { if (!S.out) return; S.out = null; player.gunOut = false; S.ads = 0; S.charge = 0; for (const k in handGuns) handGuns[k].visible = false; if (viewGrp) viewGrp.visible = false; setHud(); }
+function startReload() {
+  const id = S.out, gd = GUNS[id]; if (!id || S.reloadT > 0 || S.mag[id] >= gd.mag) return;
+  if (gd.ammo && !(A().ammo[gd.ammo] > 0)) { SND.dry(); ui.toast('Out of ammo', gd.rental ? 'Buy another box at the range desk.' : 'Buy more at a gun shop (🎯 on the map) or Cabbagela\'s Outdoors at the range.', 2500); return; }
+  S.reloadT = gd.reload; ({ shotgun: SND.pump, rifle: SND.bolt, magnum: SND.bolt, bow: SND.draw, crossbow: SND.draw, water: () => swish(1.2, 0.04, 900, 0.3) })[id]?.() ?? SND.reload();
+}
+// guns in a slot, in order (pressing the same number again cycles through them)
+function slotGuns(n) { return Object.keys(GUNS).filter(id => GUNS[id].slot === n && A().guns.includes(id)); }
+function cycle(dir) { const own = Object.keys(GUNS).filter(id => A().guns.includes(id)); if (!own.length) return; const i = own.indexOf(S.out); draw(own[(i + dir + own.length) % own.length]); }
 
 // ---------- shooting ----------
 function aimDir(out) { const y = G.camYaw, p = S.aimP, cp = Math.cos(p); return out.set(-Math.sin(y) * cp, -Math.sin(p), -Math.cos(y) * cp).normalize(); }
@@ -499,77 +617,201 @@ function muzzleWorld(out) {
   const src = fp ? viewGuns[S.out] : handGuns[S.out]; if (!src) return out.copy(camera.position);
   src.updateMatrixWorld(true); return out.copy(src.userData.muz).applyMatrix4(src.matrixWorld);
 }
-function fire() {
+function fire(charge = 1) {
   const id = S.out, gd = GUNS[id]; if (!id || S.cool > 0 || S.reloadT > 0) return false;
   if ((S.mag[id] || 0) <= 0) { SND.dry(); S.cool = 0.25; startReload(); return false; }
   camera.updateMatrixWorld(); _o.copy(camera.position); aimDir(_d);
   const skip = Math.max(0.5, (player.x - _o.x) * _d.x + (player.y + 1.4 - _o.y) * _d.y + (player.z - _o.z) * _d.z + 0.4);
-  // anybody in the line of fire? then the trigger doesn't move
-  const ppl = peopleHit(_o, _d, gd.range); const wall = ppl ? worldHit(_o, _d, skip, ppl.t) : null;
-  if (ppl && ppl.t > skip - 0.6 && !wall) { blockedShot(ppl); S.cool = 0.6; return false; }
-  S.mag[id]--; S.cool = gd.rate; S.shots++;
-  SND[gd.snd](); muzzleWorld(_mz); flash.position.copy(_mz); flash.scale.setScalar(id === 'paint' || id === 'tranq' ? 0.12 : R(0.35, 0.6)); flash.visible = id !== 'paint' && id !== 'tranq'; flashT = 0.05;
-  const spr = lerp(gd.spread, gd.ads, S.ads) + S.bloom;
-  const n = gd.pellets || 1;
+  // children and the Downtown Eastside characters are never targets: the trigger won't move
+  if (gd.fx !== 'water' && gd.fx !== 'foam') { const ppl = peopleHit(_o, _d, gd.range, 0.1, skip - 0.6); if (ppl && (ppl.kid || ppl.dtes) && !worldHit(_o, _d, skip, ppl.t)) { blockedShot(ppl); S.cool = 0.6; return false; } }
+  S.mag[id] -= gd.perShot ? Math.min(S.mag[id], gd.perShot) : 1; S.cool = gd.rate; S.shots++;
+  SND[gd.snd]?.(); muzzleWorld(_mz);
+  const big = gd.fx === 'bullet' || gd.fx === 'pellet' || gd.fx === 'flare';
+  flash.position.copy(_mz); flash.scale.setScalar(gd.fx === 'flare' ? 0.5 : id === 'magnum' ? R(0.7, 1) : id === 'rugrat' ? 0.18 : R(0.35, 0.6)); flash.visible = big; flashT = id === 'magnum' ? 0.07 : 0.05;
+  if (gd.fx === 'spray') { sprayCone(gd); return true; }
+  const spr = lerp(gd.spread, gd.ads, S.ads) + S.bloom, n = gd.pellets || 1;
   for (let k = 0; k < n; k++) {
     _pd.copy(_d); _pd.x += R(-1, 1) * spr; _pd.y += R(-1, 1) * spr; _pd.z += R(-1, 1) * spr; _pd.normalize();
-    if (gd.proj) { projs.push({ p: _mz.clone(), v: _pd.clone().multiplyScalar(gd.proj), id, life: 3, col: id === 'paint' ? pick(['#e53e3e', '#38a169', '#d69e2e', '#805ad5', '#ed64a6', '#3182ce']) : '#e53e3e', mesh: projMesh(id) }); continue; }
-    const h = castSeg(_o, _pd, gd.range, skip); const end = h ? h.p : _v2.copy(_o).addScaledVector(_pd, gd.range);
-    tracer(_mz, end, gd.golden ? [1, 0.85, 0.2] : [1, 0.8, 0.45]);
-    if (h) impact(h, _pd, id);
+    if (gd.proj) { const sp = gd.proj * (gd.charge ? 0.45 + 0.55 * charge : 1); projs.push({ p: _mz.clone(), v: _pd.clone().multiplyScalar(sp), id, life: gd.fx === 'flare' ? 25 : 4, dmg: gd.dmg * (gd.charge ? 0.35 + 0.65 * charge : 1), pen: gd.pen || 0, col: gd.fx === 'paint' ? pick(['#e53e3e', '#38a169', '#d69e2e', '#805ad5', '#ed64a6', '#3182ce']) : '#e53e3e', mesh: projMesh(id), hit: [] }); continue; }
+    // hitscan: the round keeps going through up to `pen` bodies / thin things
+    let s0 = skip, pen = gd.pen || 0, dmg = gd.dmg, last = null, end = null;
+    for (let step = 0; step < 6; step++) {
+      const h = castSeg(_o, _pd, gd.range, s0, last); if (!h) break; end = h.p;
+      const dist = h.t, fall = gd.falloff ? clamp(1 - (dist - gd.falloff) / (gd.range - gd.falloff), 0.15, 1) : 1;
+      const soft = impact(h, _pd, id, null, dmg * fall);
+      if (!soft || pen <= 0) break; pen--; dmg *= 0.6; s0 = h.t + 0.35; last = h.obj || null;
+    }
+    tracer(_mz, end || _v2.copy(_o).addScaledVector(_pd, gd.range), gd.golden ? [1, 0.85, 0.2] : id === 'magnum' ? [1, 0.7, 0.3] : [1, 0.8, 0.45]);
   }
   S.bloom = Math.min(0.06, S.bloom + gd.kick * 0.25);
   S.kickP += gd.kick * (1 - S.ads * 0.4); S.kickY += R(-0.4, 0.4) * gd.kick;
-  noisy(id);
+  if (!gd.silent) noisy(id);
   if (Math.hypot(player.x - RANGE.x, player.z - RANGE.z) < 80 && !S.rangeHi) { S.rangeHi = true; discover('gunrange'); }
-  if ((S.mag[id] || 0) <= 0) setTimeout(() => { if (S.out === id) startReload(); }, gd.rate * 1000);
+  if ((S.mag[id] || 0) <= 0 && GUNS[id].ammo !== null) setTimeout(() => { if (S.out === id) startReload(); }, gd.rate * 1000);
   return true;
 }
-const projGeo = { paint: new THREE.SphereGeometry(0.03, 6, 4), tranq: new THREE.CylinderGeometry(0.008, 0.008, 0.14, 5).rotateX(Math.PI / 2) };
-function projMesh(id) { const m = new THREE.Mesh(projGeo[id], std(id === 'tranq' ? '#e53e3e' : pick(['#e53e3e', '#38a169', '#d69e2e', '#805ad5']), { emissive: '#222' })); scene.add(m); return m; }
+// bear spray: a 9 m cone of orange fog
+function sprayCone(gd) {
+  const o = _mz, d = _d;
+  for (let k = 0; k < 10; k++) { const i = pI++ % PN; pPos.set([o.x, o.y, o.z], i * 3); const sp = R(6, 11); pVel.set([d.x * sp + R(-1.3, 1.3), d.y * sp + R(-0.6, 1.2), d.z * sp + R(-1.3, 1.3)], i * 3); pLife[i] = R(0.6, 1.1); pBase.set([1, R(0.45, 0.6), 0.2], i * 3); }
+  const inCone = (x, y, z) => { const dx = x - player.x, dy = y - (player.y + 1.3), dz = z - player.z, L = Math.hypot(dx, dy, dz); return L < gd.range && L > 0.2 && (dx * d.x + dy * d.y + dz * d.z) / L > Math.cos(gd.cone); };
+  for (const a of _fauna.live) if (!a.down && inCone(a.x, a.y + 0.7, a.z) && G.t - (a.sprayT || -9) > 1) { a.sprayT = G.t; _fauna.setSt(a, 'flee', 14); a.tx = a.x + (a.x - player.x) * 5; a.tz = a.z + (a.z - player.z) * 5; say(a, a.kind === 'bear' ? '*COUGH* *HUFF* (nope nope nope)' : '*sneeze*', 1600); if (a.kind === 'bear' && !S.sprayToast) { S.sprayToast = 1; ui.toast('🌶️ Bear spray works', 'Studies of real bear encounters found spray stopped the bear about 9 times out of 10 (better than guns). Keep it on your belt, not in your pack.', 6000); discover('bearspray'); } }
+  for (const z of zombies) if (z.state !== 'dead' && inCone(z.x, z.y + 1.2, z.z)) { z.slowT = 6; if (Math.random() < 0.1) say(z, 'Hrrkk! *cough*', 1000, 'zombie'); }
+  for (const p of peds) if (p.state !== 'dead' && p.state !== 'down' && p.x < 1e5 && inCone(p.x, p.y + 1.3, p.z)) { if ((p.sc || 1) < 0.8) continue; p.state = 'down'; p.timer = 7; p.after = 'flee'; say(p, pick(['*COUGH* MY EYES!', 'AAAH it BURNS!', '*cough cough* WHY?!']), 2000); crime(1, p.x, p.z, 'assault'); }
+  for (const c of WANTED.cops) if (c.hp > 0 && c.state === 'run' && inCone(c.x, c.y + 1.3, c.z)) hurtCop(c, 'stun', 0);
+}
+const projGeo = { paint: new THREE.SphereGeometry(0.03, 6, 4), tranq: new THREE.CylinderGeometry(0.008, 0.008, 0.14, 5).rotateX(Math.PI / 2), bow: new THREE.CylinderGeometry(0.005, 0.005, 0.72, 5).rotateX(Math.PI / 2), crossbow: new THREE.CylinderGeometry(0.006, 0.006, 0.42, 5).rotateX(Math.PI / 2), flare: new THREE.SphereGeometry(0.06, 8, 6), water: new THREE.SphereGeometry(0.035, 5, 4), foam: new THREE.CylinderGeometry(0.012, 0.012, 0.07, 6).rotateX(Math.PI / 2) };
+const projMat = { bow: std('#d69e2e'), crossbow: std('#c53030'), flare: new THREE.MeshBasicMaterial({ color: '#ff5a3c' }), water: new THREE.MeshStandardMaterial({ color: '#9fd8f0', transparent: true, opacity: 0.6, roughness: 0.05 }), foam: std('#dd6b20'), tranq: std('#e53e3e', { emissive: '#222' }) };
+function projMesh(id) {
+  const m = new THREE.Mesh(projGeo[id] || projGeo.paint, projMat[id] || std(pick(['#e53e3e', '#38a169', '#d69e2e', '#805ad5']), { emissive: '#222' }));
+  if (id === 'flare') { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: '#ff4a2a', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })); sp.scale.setScalar(5); m.add(sp); m.userData.glow = sp; }
+  scene.add(m); return m;
+}
+const stuck = [];   // arrows / bolts / foam darts stuck where they landed
+function stick(P, p, d) { P.mesh.position.copy(p).addScaledVector(d, -0.25); P.mesh.lookAt(_v.copy(P.mesh.position).add(d)); stuck.push({ m: P.mesh, t: G.t + 40 }); if (stuck.length > 40) scene.remove(stuck.shift().m); }
 function updateProjs(dt) {
   for (let i = projs.length - 1; i >= 0; i--) {
-    const P = projs[i]; P.life -= dt; P.v.y -= 9.8 * dt * (P.id === 'tranq' ? 0.6 : 1);
-    const L = P.v.length() * dt, d = _pd.copy(P.v).normalize(); const h = castSeg(P.p, d, L, 0);
-    if (h) { impact(h, d, P.id, P.col); scene.remove(P.mesh); projs.splice(i, 1); continue; }
+    const P = projs[i], gd = GUNS[P.id]; P.life -= dt; P.v.y -= 9.8 * dt * (gd.grav ?? 1);
+    if (P.id === 'flare') { P.v.multiplyScalar(1 - dt * 0.15); if (Math.random() < 0.6) burst(P.p, 1, '#ff7a3a', 0.4, 0.6); P.mesh.userData.glow.scale.setScalar(5 + Math.sin(G.t * 30) * 0.8); }
+    if (P.landed) { P.life -= 0; if (P.life < 0) { scene.remove(P.mesh); projs.splice(i, 1); } continue; }
+    const L = P.v.length() * dt, d = _pd.copy(P.v).normalize(); const h = castSeg(P.p, d, L, 0, P.hit[P.hit.length - 1]);
+    if (h) {
+      const soft = impact(h, d, P.id, P.col, P.dmg);
+      if (soft && P.pen > 0) { P.pen--; P.dmg *= 0.6; P.hit.push(h.obj); P.p.copy(h.p).addScaledVector(d, 0.3); continue; }
+      if (P.id === 'bow' || P.id === 'crossbow' || P.id === 'foam') { stick(P, h.p, d); projs.splice(i, 1); continue; }
+      if (P.id === 'flare' && h.kind === 'ground' && G.season === 'summer' && (G.wet || 0) < 0.1 && !habitatAt(h.p.x, h.p.z).town && !G.fireWarn) { G.fireWarn = 1; addFire(h.p.x, h.p.y, h.p.z, 30, 1.6); ui.toast('🔥 Wildfire!', 'Dry summer grass catches instantly. (In real BC, a campfire ban usually means flares too.) It burns out after a while.', 4500); setTimeout(() => G.fireWarn = 0, 30000); }
+      if (P.id === 'flare' && (h.kind === 'ground' || h.kind === 'building' || h.kind === 'prop')) { P.landed = true; P.mesh.position.copy(h.p).addScaledVector(d, -0.1); P.v.set(0, 0, 0); continue; }
+      scene.remove(P.mesh); projs.splice(i, 1); continue;
+    }
     P.p.addScaledVector(d, L); P.mesh.position.copy(P.p); P.mesh.lookAt(_v.copy(P.p).add(d));
     if (P.life < 0) { scene.remove(P.mesh); projs.splice(i, 1); }
   }
+  for (let i = stuck.length - 1; i >= 0; i--) if (G.t > stuck[i].t) { scene.remove(stuck[i].m); stuck.splice(i, 1); }
 }
-// what a hit does
-function impact(h, d, id, col) {
-  const gd = GUNS[id], paint = id === 'paint', dart = id === 'tranq', n = _v.copy(d).negate();
-  if (h.kind === 'target') { h.paint = paint ? col : null; const solid = h.obj.onHit(h.obj, h); if (paint) decal(h.p, n, 0.12, col); else if (h.obj.paper) decal(h.p, n, 0.012, '#111'); else if (!solid) burst(h.p, 5, '#ffe9a8', 2, 1); return; }
+// what a hit does. Returns true when the round could carry on through (a body, a paper target, a thin panel).
+function impact(h, d, id, col, dmg = GUNS[id].dmg) {
+  const gd = GUNS[id], fx = gd.fx, n = _v.copy(d).negate();
+  if (h.t > 600 && ['person', 'zombie', 'animal', 'target', 'vehicle', 'aircraft'].includes(h.kind)) longShot(h.t);
+  if (h.kind === 'target') { h.paint = fx === 'paint' ? col : null; if (fx === 'water' || fx === 'foam') { SND.boing(); return false; } const solid = h.obj.onHit(h.obj, h); if (fx === 'paint') decal(h.p, n, 0.12, col); else if (h.obj.paper) decal(h.p, n, 0.012, '#111'); else if (!solid) burst(h.p, 5, '#ffe9a8', 2, 1); return !!h.obj.paper; }
+  if (h.kind === 'person') return hitPerson(h, d, id, col, dmg);
   if (h.kind === 'zombie') {
-    const z = h.obj; if (paint) { decal(h.p, n, 0.1, col); say(z, pick(['Urr? (I\'m… purple now)', 'Mrrgh… paint?']), 1500, 'zombie'); z.slowT = 2; return; }
-    if (dart) { z.state = 'dead'; z.timer = 3; say(z, 'Zzz…urrk', 1200, 'zombie'); hitMark('hit'); return; }
-    z.state = 'dead'; z.timer = 3; zstats.kills++; A().zk = (A().zk || 0) + 1; say(z, h.head ? 'URK!' : 'Urrk…', 1000, 'zombie'); burst(h.p, 14, '#7a9a4a', 2, 2);
-    hitMark(h.head ? 'bull' : 'hit'); if (h.head && Math.random() < 0.3) ui.toast('🧟 HEADSHOT', 'Fright Nights: ' + A().zk + ' zombies down', 900);
-    if (A().zk >= 25) discover('zombiehunter'); return;
+    const z = h.obj;
+    if (fx === 'paint') { decal(h.p, n, 0.1, col); say(z, pick(['Urr? (I\'m… purple now)', 'Mrrgh… paint?']), 1500, 'zombie'); return false; }
+    if (fx === 'water' || fx === 'foam') { if (Math.random() < 0.2) say(z, 'Mrr? (refreshing)', 1000, 'zombie'); return false; }
+    if (fx === 'dart') { z.state = 'dead'; z.timer = 3; say(z, 'Zzz…urrk', 1200, 'zombie'); hitMark('hit'); return false; }
+    const zz = h.head ? 'head' : bodyZone(h, z); z.hp = (z.hp ?? 100) - dmg * (zz === 'head' ? 3 : zz === 'torso' ? 1 : 0.5) * (fx === 'flare' ? 3 : 1); burst(h.p, 10, '#4a6a2a', 2, 2); SND.hitBody(); if (zz === 'leg') { z.slowT = 9999; say(z, '*drags its leg*', 1200, 'zombie'); }
+    if (z.hp <= 0) { z.state = 'dead'; z.timer = 3; zstats.kills++; A().zk = (A().zk || 0) + 1; say(z, h.head ? 'URK!' : 'Urrk…', 1000, 'zombie'); hitMark(h.head ? 'bull' : 'hit'); if (h.head && Math.random() < 0.3) ui.toast('🧟 HEADSHOT', 'Fright Nights: ' + A().zk + ' zombies down', 900); if (A().zk >= 25) discover('zombiehunter'); }
+    else { hitMark('hit'); z.yaw += R(-0.6, 0.6); say(z, pick(['Grraah!', 'Hnnngh…', 'BRAAAINS (angrily)']), 900, 'zombie'); }
+    return true;
   }
-  if (h.kind === 'animal') { shootAnimal(h.obj, id, h, col); return; }
-  if (paint) { decal(h.p, h.n || n, R(0.12, 0.22), col); SND.splat(); burst(h.p, 6, col, 1.2, 1); return; }
-  if (dart) { SND.thud(); return; }
-  if (h.kind === 'water') { SND.splash(); burst(h.p, 10, '#cfe8f0', 0.8, 3.5); return; }
-  if (h.kind === 'vehicle') { SND.ric(); burst(h.p, 6, '#ffe08a', 3, 2); decal(h.p, n, 0.01, '#222'); if (!S.carToast || G.t - S.carToast > 20) { S.carToast = G.t; ui.toast('🚗 *PING*', 'Bullets bounce off. (Nobody\'s insurance covers this.)', 1500); } return; }
+  if (h.kind === 'animal') { shootAnimal(h.obj, id, h, col, dmg); return true; }
+  if (h.kind === 'aircraft') { if (fx === 'water' || fx === 'foam' || fx === 'paint' || fx === 'dart') { if (fx === 'paint') decal(h.p, n, 0.3, col); return false; } hitAircraft(h, d, id, dmg * (fx === 'flare' ? 3 : 1)); return false; }
+  if (fx === 'paint') { decal(h.p, h.n || n, R(0.12, 0.22), col); SND.splat(); burst(h.p, 6, col, 1.2, 1); return false; }
+  if (fx === 'water') { if (Math.random() < 0.3) burst(h.p, 3, '#cfe8f0', 0.8, 1); if (Math.random() < 0.15) SND.squish(); return false; }
+  if (fx === 'foam') { SND.boing(); return false; }
+  if (fx === 'dart' || fx === 'arrow') { SND.thunk(); if (h.kind === 'vehicle') hitVehicle(h, d, id, dmg * 0.3); return false; }
+  if (h.kind === 'water') { SND.splash(); burst(h.p, id === 'magnum' ? 22 : 10, '#cfe8f0', 0.8, id === 'magnum' ? 6 : 3.5); return false; }
+  if (h.kind === 'vehicle') { hitVehicle(h, d, id, dmg); return false; }
   if (h.kind === 'prop') {
-    const c = h.c, small = c.brk && (c.top - (c.base ?? c.top - 2)) < 2.6;
-    if (small) { const o = { x: c.x, z: c.z }; collideStatic(o, 0.01, c.top - 0.2, Math.max(c.brk + 2, 13), _v2.set(d.x, 0, d.z).normalize()); hitMark('hit'); SND.ric(); burst(h.p, 10, '#cbd5e0', 2.5, 2); return; }
-    SND.ric(); burst(h.p, 6, '#ffe08a', 2.5, 1.5); decal(h.p, n, 0.014, '#2a2a2a'); return;
+    const c = h.c, ht = c.top - (c.base ?? c.top - 2), need = c.kind === 'fly' ? 1 : c.kind === 'hydrant' ? 2 : ht < 2.6 ? 2 : ht < 7 ? 4 : 99;
+    if (c.brk && (gd.power || 0) >= need) { const o = { x: c.x, z: c.z }; collideStatic(o, 0.01, c.top - 0.2, Math.max(c.brk + 2, 13), _v2.set(d.x, 0, d.z).normalize()); hitMark('hit'); SND.ric(); burst(h.p, 10, '#cbd5e0', 2.5, 2); return false; }
+    SND.ric(); burst(h.p, 6, '#ffe08a', 2.5, 1.5); decal(h.p, n, 0.014, '#2a2a2a'); return false;
   }
+  if (fx === 'flare') { burst(h.p, 20, '#ff6a2a', 2, 3); return false; }
   // ground / buildings
-  burst(h.p, 6, h.kind === 'ground' ? '#8a7a5a' : '#c0b8a8', 1.6, 1.8); decal(h.p, h.n || n, id === 'shotgun' ? 0.012 : 0.016, '#262626'); if (Math.random() < 0.3) SND.ric();
+  burst(h.p, id === 'magnum' ? 14 : 6, h.kind === 'ground' ? '#8a7a5a' : '#c0b8a8', id === 'magnum' ? 3 : 1.6, 1.8); decal(h.p, h.n || n, id === 'shotgun' ? 0.012 : id === 'magnum' ? 0.03 : id === 'rugrat' ? 0.008 : 0.016, '#262626'); if (Math.random() < 0.3) SND.ric();
+  return false;
 }
+// vehicles: bullet holes, broken glass, smoke when it's had enough; a big round shoves it; drivers bail or floor it
+function hitVehicle(h, d, id, dmg) {
+  const v = h.obj, gd = GUNS[id]; v.gunHp = (v.gunHp ?? 300) - dmg;
+  decal(h.p, _v.copy(d).negate(), id === 'magnum' ? 0.03 : 0.015, '#1a1a1a'); burst(h.p, 6, '#ffe08a', 3, 2);
+  if (Math.random() < 0.35) { SND.glassCar(); burst(h.p, 10, '#cfe8f0', 2, 2); } else SND.metal();
+  if (gd.push && knock) try { knock(v, d.x * gd.push, d.z * gd.push, R(-0.4, 0.4), 4); } catch (e) { /* knock is optional */ }
+  if (h.occupied && v.ai && !v.ai.flee) { v.ai.flee = true; crime(1, v.x, v.z, 'shooting at a car'); if (G.t - (S.carToast || -99) > 8) { S.carToast = G.t; ui.toast('🚗 The driver floors it!', 'Tyres squeal as they speed away from you.', 2200); } }
+  if (gd.fx === 'flare') v.gunHp -= 250;
+  if (v.gunHp <= -150 && !v.burning) { v.burning = true; v.smk && (v.smk.end = 0); v.fire = addFire(0, 0, 0, 90, 1.1, { obj: v, oy: 0.9 }); ui.toast('🔥 It\'s on fire!', 'Fuel is leaking into the flames. Get back!', 2500); setTimeout(() => { if (vehicles.includes(v)) { explode(v.x, v.y || walkY(v.x, v.z), v.z, 1.2, 'car explosion'); v.d = Object.create(v.d); v.d.max = 0; v.wreck = true; v.g.traverse(o => { if (o.isMesh && o.material && !o.material.userData?.burnt) { o.material = o.material.clone(); o.material.color?.multiplyScalar(0.15); o.material.userData = { burnt: true }; } }); } }, 4500); }
+  if (v.gunHp <= 0 && !v.smoking) { v.smoking = true; v.smk = addFire(0, 0, 0, 240, 0.8, { flame: false, obj: v, oy: 1 }); ui.toast('💨 That vehicle\'s had it', 'Steam pours from the engine. It\'s not going anywhere fast.', 2500); if (v.d) { v.d = Object.create(v.d); v.d.max = (v.d.max || 20) * 0.3; } }
+  if (!h.occupied && G.t - (S.carToast || -99) > 25) { S.carToast = G.t; ui.toast('🚗 *PING* *CRASH*', 'Holes, cracked glass, and somebody\'s insurance premium going up.', 1800); }
+}
+const smokeCars = () => vehicles.filter(v => v.smoking && Math.hypot(v.x - player.x, v.z - player.z) < 150);
+// people: bullets hurt or kill, darts put them to sleep, paint/foam/water just annoy them. Every hit is a crime.
+function hitPerson(h, d, id, col, dmg) {
+  const p = h.obj, gd = GUNS[id], fx = gd.fx;
+  if (h.kid || h.dtes) return false;
+  if (h.cop) {
+    if (fx === 'dart') { hurtCop(p, 'sleep', 0); hitMark('hit'); return false; }
+    if (fx === 'paint' || fx === 'foam' || fx === 'water') { say(p, pick(['That\'s assaulting an officer, pal!', 'Oh, you\'re in TROUBLE now.']), 1500); crime(1, p.x, p.z, 'assaulting an officer'); return false; }
+    const z = bodyZone(h, p); hurtCop(p, 'hit', dmg * ZONE_MULT[z]); SND.hitBody(); bleed(h.p, d, dmg * ZONE_MULT[z]); if (p.hp <= 0) pool(p.x, p.y, p.z, 0.6); hitMark(z === 'head' ? 'bull' : 'hit'); return true;
+  }
+  if (fx === 'paint') { decal(h.p, _v.copy(d).negate(), 0.1, col); say(p, pick(['OW! Paintball?! Really?!', 'My NEW jacket!', 'That STINGS!']), 1800); p.state = 'flee'; p.timer = 6; player.karma -= 1; return false; }
+  if (fx === 'water') { if (G.t - (p.wetT || -99) > 3) { p.wetT = G.t; const hot = G.season === 'summer' && G.hour > 10 && G.hour < 19; say(p, hot ? pick(['Ha! Thanks, it\'s HOT!', 'Again! Again!', 'Best day ever!']) : pick(['HEY! My PHONE!', 'It\'s ' + (G.season === 'winter' ? 'FREEZING' : 'cold') + ', you maniac!', 'Not cool. Literally.']), 1800); if (!hot) { p.state = 'flee'; p.timer = 4; } else if (!S.waterFun) { S.waterFun = 1; discover('drencher'); } } return false; }
+  if (fx === 'foam') { say(p, pick(['Pew pew? Grow up.', 'Is that… a Nerf dart?', 'I will NOT be dueling you.', '*picks up the dart and fires it back*']), 1800); SND.boing(); return false; }
+  if (fx === 'dart') { p.state = 'down'; p.timer = 25; p.after = 'groggy'; say(p, 'wha… *yawn*… zzz', 1500); hitMark('hit'); crime(1, p.x, p.z, 'darting a person'); return false; }
+  // a real hit: WHERE it lands decides what happens
+  const zone = bodyZone(h, p), mult = ZONE_MULT[zone];
+  p.hp = (p.hp ?? 100) - dmg * mult * (fx === 'flare' ? 0.8 : 1); SND.hitBody(); bleed(h.p, d, dmg * mult);
+  scareAround(35, true, p);
+  if (p.hp <= 0) { p.state = 'dead'; p.timer = 45; p.say = null; p.bleedT = 0; hitMark(zone === 'head' ? 'bull' : 'hit'); pool(p.x, p.y, p.z, 0.55 + Math.min(0.5, dmg / 400)); player.karma -= 10; S.kills = (S.kills || 0) + 1; crime(2, p.x, p.z, 'murder'); paramedics(p); }
+  else {
+    p.bleedT = G.t + 25; hitMark('hit'); player.karma -= 4; crime(1, p.x, p.z, 'assault');
+    if (zone === 'leg') { p.limp = true; p.speed = Math.min(p.speed || 1.3, 0.55); p.state = 'down'; p.timer = 3; p.after = 'flee'; say(p, pick(['AAAH! MY LEG!', 'I can\'t walk! Somebody HELP!', 'My KNEE!']), 2200); }
+    else if (zone === 'arm') { p.armHurt = true; p.state = 'flee'; p.timer = 10; say(p, pick(['ARGH! My ARM!', 'I\'m hit! It\'s my arm!', 'Ow ow OW!']), 2200); }
+    else { p.state = 'down'; p.timer = zone === 'head' ? 6 : 3.5; p.after = 'flee'; say(p, fx === 'flare' ? pick(['AAAH! FIRE! STOP, DROP AND ROLL!', 'I\'M ON FIRE!']) : pick(['AAAH! I\'m HIT!', 'Call an ambulance!', 'Why?! WHY?!']), 2000); }
+  }
+  return true;
+}
+// head / torso / arm / leg from where on the body the round landed
+const ZONE_MULT = { head: 2.6, torso: 1, arm: 0.4, leg: 0.5 };
+function bodyZone(h, p) {
+  if (h.head) return 'head';
+  const sc = p.sc || 1, ly = (h.p.y - (p.y || 0)) / sc; if (ly < 0.85) return 'leg';
+  const rx = Math.cos(p.yaw || 0), rz = -Math.sin(p.yaw || 0), side = (h.p.x - p.x) * rx + (h.p.z - p.z) * rz;
+  return Math.abs(side) > 0.17 * sc && ly < 1.45 ? 'arm' : 'torso';
+}
+// blood: a spray of drops where it hits, a few spatters on the ground behind, a pool under the fallen
+function bleed(p, d, amount) {
+  const n = Math.round(clamp(amount / 8, 4, 18)); burst(p, n, '#8a0f0f', 1.3, 1.2, 0.25);
+  for (let k = 0; k < Math.min(3, n / 5); k++) { const x = p.x + d.x * R(0.4, 1.6) + R(-0.3, 0.3), z = p.z + d.z * R(0.4, 1.6) + R(-0.3, 0.3); decal(_v2.set(x, walkY(x, z, p.y) + 0.02, z), _up2, R(0.05, 0.14), '#5a0a0a'); }
+}
+const _up2 = new THREE.Vector3(0, 1, 0);
+function pool(x, y, z, size) { decal(_v2.set(x, walkY(x, z, y + 0.5) + 0.02, z), _up2, size, '#4a0808'); }
+// the walking wounded leave a trail of drops
+function updateBleeding(dt) {
+  for (const p of peds) if (p.bleedT > G.t && p.x < 1e5 && Math.random() < dt * 2.5) { burst(_v.set(p.x, p.y + 0.9, p.z), 1, '#8a0f0f', 0.2, 0.2); if (Math.random() < 0.5) decal(_v2.set(p.x + R(-0.2, 0.2), walkY(p.x, p.z, p.y + 0.5) + 0.02, p.z + R(-0.2, 0.2)), _up2, R(0.03, 0.07), '#5a0a0a'); }
+  for (const a of _fauna.live) if (a.bleedT > G.t && !a.down && Math.random() < dt * 2) decal(_v2.set(a.x, walkY(a.x, a.z, a.y + 0.5) + 0.02, a.z), _up2, R(0.04, 0.09), '#5a0a0a');
+}
+function crime(level, x, z) { addCrime(level, x, z); }
+function longShot(t) { if (t > (S.longBest || 0)) { S.longBest = t; ui.toast('🔭 Long shot: ' + Math.round(t).toLocaleString('en-CA') + ' m', t > 1500 ? 'That\'s past the length of the Lions Gate Bridge. Absurd.' : 'Further than most hunters would ever try.', 2200); } if (t > 1000) discover('longshot'); }
+// where an animal was hit, along its body (front = the head end)
+function animalZone(a, h) {
+  const b = animalBox(a); if (b.bird || b.L < 0.2) return 'body';
+  const fx = -Math.sin(a.yaw), fz = -Math.cos(a.yaw), along = ((h.p.x - a.x) * fx + (h.p.z - a.z) * fz) / (b.L * 0.6), low = h.p.y < b.y - b.r * 0.45;
+  if (along > 1.1) return 'head'; if (low) return 'leg'; if (along > 0.2) return 'vitals'; if (along < -0.45) return 'rear'; return 'body';
+}
+function paramedics(p) { setTimeout(() => { if (p.state === 'dead' && Math.hypot(p.x - player.x, p.z - player.z) < 200 && G.t - (S.ambT || -99) > 30) { S.ambT = G.t; ui.toast('🚑 Paramedics are on the way', 'Sirens in the distance. The street goes very quiet.', 2500); beep([700, 900, 700, 900], 0.3, 'sine', 0.02, 0.3); } }, 4000); }
 
 // ---------- hunting ----------
 function inSeason(id) { const L = LEGAL[id]; return L && L.seasons.includes(G.season || 'summer'); }
-function shootAnimal(a, id, h, col) {
-  if (id === 'paint') { decal(h.p, _v.copy(h.p).sub(camera.position).normalize().negate(), 0.12, col); _fauna.setSt(a, 'flee', 8); a.tx = a.x + (a.x - player.x) * 3; a.tz = a.z + (a.z - player.z) * 3; player.karma -= 1; ui.toast('🎨 You paintballed a ' + a.S.name.toLowerCase(), 'It bolts, very confused and very purple. Not cool: they\'re wild animals. (-1 karma)', 3000); return; }
-  if (id === 'tranq') { down(a, 'sleep'); hitMark('hit'); ui.toast('💤 Dart hit', a.S.name + ' is getting sleepy… In a few seconds you can walk up and press E to fit a research GPS collar.', 4000); return; }
-  // a bullet
-  const why = legalWhy(a, id), c = habitatAt(a.x, a.z);
+function shootAnimal(a, id, h, col, dmg) {
+  const gd = GUNS[id], fx = gd.fx, flee = (m = 3, t = 8) => { _fauna.setSt(a, 'flee', t); a.tx = a.x + (a.x - player.x) * m; a.tz = a.z + (a.z - player.z) * m; };
+  if (fx === 'paint') { decal(h.p, _v.copy(h.p).sub(camera.position).normalize().negate(), 0.12, col); flee(); player.karma -= 1; ui.toast('🎨 You paintballed a ' + a.S.name.toLowerCase(), 'It bolts, very confused and very purple. Not cool: they\'re wild animals. (-1 karma)', 3000); return; }
+  if (fx === 'water' || fx === 'foam') { flee(2, 5); if (Math.random() < 0.3) say(a, fx === 'water' ? '*shakes off*' : '*sniffs the dart, unimpressed*', 1200); return; }
+  if (fx === 'dart') { down(a, 'sleep'); hitMark('hit'); ui.toast('💤 Dart hit', a.S.name + ' is getting sleepy… In a few seconds you can walk up and press E to fit a research GPS collar.', 4000); return; }
   if (a.fence || a.resident) { ui.toast('🐻 Not this one', 'That\'s a well-known local bear on the wildlife cameras. The shot goes wide on purpose: your hands are shaking.', 3500); return; }
-  down(a, 'dead'); hitMark('bull'); burst(h.p, 8, '#7a1a1a', 1, 1);
+  // a real hit: does it go down?
+  const az = animalZone(a, h), am = { vitals: 1.6, head: 2, body: 1, rear: 0.55, leg: 0.45 }[az];
+  a.hp = (a.hp ?? animalHp(a)) - dmg * am * (fx === 'flare' ? 0.5 : 1); SND.hitBody(); bleed(h.p, _v2.copy(h.p).sub(camera.position).normalize().clone(), dmg * am * 0.6); a.bleedT = G.t + 40; a.lastZone = az;
+  if (a.hp > 0) {
+    hitMark('hit'); a.wounded = true;
+    if ((a.kind === 'bear' || a.id === 'moose') && Math.random() < 0.55) { _fauna.setSt(a, a.kind === 'bear' ? 'chase' : 'charge', 6); say(a, a.kind === 'bear' ? '*ROAR*' : '*SNORT*', 1500); ui.toast('🐻 It\'s CHARGING!', 'A wounded animal is the most dangerous kind. Bear spray (slot 8) or a clean follow-up shot, now!', 3500); }
+    else flee(5, 14);
+    if (az === 'leg' || az === 'rear') { a.limp = true; }
+    if (G.t - (S.woundT || -99) > 30) { S.woundT = G.t; ui.toast('⚠️ Wounded, not down (' + az + ' hit)', `${gd.name.split(' (')[0]} hit for ${Math.round(dmg)}, but a ${a.S.name.toLowerCase()} takes about ${animalHp(a)}. Ethical hunters use enough gun and aim just behind the front leg (heart and lungs).`, 6000); }
+    return;
+  }
+  const why = legalWhy(a, id);
+  down(a, 'dead'); hitMark('bull'); pool(a.x, a.y, a.z, 0.4 + (a.sc || 1) * 0.35); if (az === 'vitals' || az === 'head') ui.toast(az === 'head' ? '🎯 Head shot' : '🎯 Heart-lung shot', az === 'vitals' ? 'Right behind the front leg: quick and clean, the way it should be.' : 'Instant. (Hunters usually avoid head shots: too easy to miss and only wound.)', 2200);
   if (!why) {
     const L = LEGAL[a.id]; if (L.tag) A().tags[L.tag]--; a.legal = true;
     ui.toast('🦌 Clean, legal harvest', `${L.name}${L.tag ? ' · tag cancelled' : ''}. Walk up and press E to field-dress it and pack it out.`, 5000);
@@ -580,10 +822,11 @@ function shootAnimal(a, id, h, col) {
     setTimeout(() => ui.toast('🚔 POACHING: fined ' + money(fine), `A BC Conservation Officer steps out of the trees. ${why}${seized} (-${serious ? 10 : 5} karma)`, 8000), 900);
     discover('wildfine');
   }
-  void c;
 }
 function legalWhy(a, gun) {
   const L = LEGAL[a.id], c = habitatAt(a.x, a.z);
+  const g = GUNS[gun];
+  if (gun === 'flare') return 'A flare gun is a distress signal, not a hunting weapon.';
   if (gun === 'pistol' || gun === 'golden') return 'Handguns can\'t be used for hunting in Canada.';
   if (a.white) return 'You shot a Kermode "spirit bear". They\'re protected, sacred to the Gitga\'at and Kitasoo/Xai\'xais Nations, and there are only a few hundred.';
   if (a.cub || (a.cubs && a.cubs.length)) return 'Bear cubs and mothers with cubs are never legal.';
@@ -591,7 +834,8 @@ function legalWhy(a, gun) {
   if (!A().licence) return 'You don\'t have a BC hunting licence (Cabbagela\'s sells them).';
   if (!inSeason(a.id)) return `${L.name} season is closed in ${G.season} (open: ${L.seasons.join(' + ')}).`;
   if (L.tag && !(A().tags[L.tag] > 0)) return `You need a ${TAGS[L.tag][0].toLowerCase()} for that.`;
-  if (L.big && gun !== 'rifle') return 'Big game needs a rifle (a clean, ethical shot).';
+  if (L.big && g.cls !== 'big') return 'Big game needs a centrefire rifle, a bow or a crossbow (a .22 or birdshot only wounds it).';
+  if (!L.big && g.cls !== 'small' && gun !== 'bow' && gun !== 'crossbow') return 'Use a shotgun or a .22 for small game (a big rifle just destroys it).';
   if (c.town || c.city || c.park) return 'No hunting in town or in parks.';
   if (nearestRoad(player.x, player.z, 6, r => r.t <= 5)) return 'No shooting from a road.';
   return null;
@@ -641,33 +885,34 @@ function downedPrompt() {
   return `<kbd>E</kbd> ${best.legal ? '🔪 Field-dress and pack out' : '🚔 Hand it over to the conservation officer'}`;
 }
 
-// ---------- people: the safety rule ----------
+// ---------- people ----------
+// children and the Downtown Eastside characters are never targets
 function blockedShot(h) {
-  SND.dry(); player.karma -= 3; S.blocks = (S.blocks || 0) + 1;
-  const fine = S.blocks > 1 ? 250 : 0; if (fine) player.money = Math.max(0, player.money - fine);
-  scareAround(25, true);
-  const who = h.car ? 'There\'s someone in that vehicle.' : h.dtes ? 'That\'s a person sitting right there.' : 'That\'s a person.';
-  ui.toast('🛑 Your finger stays off the trigger', who + ' Guns in this game are for targets, zombies and legal hunting, never people. ' + (fine ? `🚔 VPD: "Drop it!" You\'re fined ${money(fine)}. ` : '🚔 Someone called the police: next time it\'s a fine. ') + '(-3 karma)', 6500);
-  holster(); beep([660, 880, 660, 880], 0.18, 'sawtooth', 0.03, 0.2);
+  SND.dry(); player.karma -= 2;
+  if (h.kid) say(h.obj, pick(['MOMMY!', 'AAAH!', '😭']), 1800);
+  else say(h.obj, pick(['Whoa, whoa, put that away!', 'Not cool, man.', 'Hey! I\'m just sitting here!']), 2000);
+  scareAround(20, true);
+  if (G.t - (S.blockT || -99) > 20) { S.blockT = G.t; ui.toast('🛑 Your finger freezes on the trigger', h.kid ? 'That\'s a kid. Not in this game, not ever. (-2 karma)' : 'Not the people living rough on Hastings: they\'re here as neighbours, not targets. (-2 karma)', 4500); }
 }
-function scareAround(r, scream) {
-  for (const p of peds) { const d = Math.hypot(p.x - player.x, p.z - player.z); if (d < r && p.state !== 'down' && p.state !== 'xwait' && p.state !== 'xcross') { p.state = 'flee'; p.timer = R(4, 8); if (scream && Math.random() < 0.5) say(p, pick(['AAAAH!', 'GUN!!', 'Call 911!', 'RUN!', 'Nope nope nope'])); } }
+function scareAround(r, scream, except = null) {
+  for (const p of peds) { if (p === except || p.state === 'dead' || p.state === 'down') continue; const d = Math.hypot(p.x - player.x, p.z - player.z); if (d < r && p.state !== 'xwait' && p.state !== 'xcross') { p.state = 'flee'; p.timer = R(5, 9); if (scream && Math.random() < 0.5) say(p, pick(['AAAAH!', 'GUN!!', 'Call 911!', 'RUN!', 'Nope nope nope', 'Get DOWN!'])); } }
 }
 function noisy(id) {
-  if (id === 'paint' || id === 'tranq') return;
+  const loud = id === 'magnum' ? 110 : id === 'rifle' || id === 'shotgun' ? 75 : id === 'rugrat' ? 25 : 45;
   const c = habitatAt(player.x, player.z), atRange = Math.hypot(player.x - RANGE.x, player.z - RANGE.z) < 90, zone = Math.hypot(player.x - ZONE.x, player.z - ZONE.z) < ZONE.r + 40;
-  if (!atRange && !zone && (c.town || c.city)) { scareAround(id === 'rifle' ? 70 : 45, true); if (G.t - S.cityWarn > 90) { S.cityWarn = G.t; ui.toast('😱 Gunshots in the city!', 'Everyone nearby runs for cover. The range, Playland\'s Fright Nights and the backcountry are better places for this.', 4500); } }
-  for (const a of _fauna.live) if (!a.down && Math.hypot(a.x - player.x, a.z - player.z) < 120) { if (a.kind !== 'bear' || Math.random() < 0.7) { _fauna.setSt(a, 'flee', 8); a.tx = a.x + (a.x - player.x) * 3; a.tz = a.z + (a.z - player.z) * 3; } }
+  if (!atRange && !zone && (c.town || c.city)) { scareAround(loud, true); if (G.t - S.cityWarn > 90) { S.cityWarn = G.t; ui.toast('😱 Gunshots in the city!', 'Everyone nearby runs for cover. Hit somebody and the police come.', 3500); } }
+  for (const a of _fauna.live) if (!a.down && Math.hypot(a.x - player.x, a.z - player.z) < loud * 1.6) { if (a.kind !== 'bear' || Math.random() < 0.7) { _fauna.setSt(a, 'flee', 8); a.tx = a.x + (a.x - player.x) * 3; a.tz = a.z + (a.z - player.z) * 3; } }
 }
+// pointing a gun at someone: they scream and run (police officers yell back)
 function aimAtPeople() {
-  camera.updateMatrixWorld(); aimDir(_d); const h = peopleHit(camera.position, _d, 70); S.aimPerson = null;
+  camera.updateMatrixWorld(); aimDir(_d); const h = peopleHit(camera.position, _d, 70, 0.25); S.aimPerson = null;
   if (!h || worldHit(camera.position, _d, 1, h.t)) return;
-  S.aimPerson = h; const p = h.obj, k = p;
-  if (h.car) return;
-  if (G.t - (S.aimWarn.get(k) || -99) < 15) return; S.aimWarn.set(k, G.t);
-  if (!h.dtes && p.state !== 'down') { p.state = 'flee'; p.timer = R(5, 8); }
-  say(p, pick(h.dtes ? ['Whoa, whoa, put that away!', 'Not cool, man.', 'Hey! I\'m just sitting here!'] : ['AAAAH!', 'Don\'t shoot!!', 'Put it DOWN!', 'Help! HELP!', '😱']), 2200);
-  player.karma -= 1; if (!S.aimToasted || G.t - S.aimToasted > 60) { S.aimToasted = G.t; ui.toast('😱 Never point a gun at a person', 'They scream and run. Point it somewhere safe. (-1 karma)', 3500); }
+  S.aimPerson = h; const p = h.obj;
+  if (G.t - (S.aimWarn.get(p) || -99) < 12) return; S.aimWarn.set(p, G.t);
+  if (h.cop) { say(p, pick(['DROP THE WEAPON!', 'Lower it! NOW!', 'Don\'t do it!']), 1800); return; }
+  if (p.state === 'down') return;
+  if (!h.dtes) { p.state = 'flee'; p.timer = R(5, 8); }
+  say(p, pick(h.dtes ? ['Whoa, whoa, put that away!', 'Not cool, man.'] : h.kid ? ['MOMMY!', '😭'] : ['AAAAH!', 'Don\'t shoot!!', 'Put it DOWN!', 'Help! HELP!', '😱', 'Take my wallet, just GO!']), 2200);
 }
 
 // ---------- HUD ----------
@@ -690,7 +935,7 @@ function setHud() {
   makeHud(); const id = S.out;
   if (!id) { hud.style.display = 'none'; xh.style.display = 'none'; scopeEl.style.display = 'none'; return; }
   const gd = GUNS[id], res = gd.ammo ? (A().ammo[gd.ammo] || 0) : '∞', scope = gd.scope && S.ads > 0.6;
-  hud.style.display = 'block'; hud.innerHTML = `${gd.icon} ${gd.name}<br><b>${S.mag[id] || 0}</b> / ${gd.mag} <small>· ${res} spare</small>${S.reloadT > 0 ? '<br><small>reloading…</small>' : ''}${A().licence && Object.values(A().tags).some(n => n > 0) ? '<br><small>🏷️ ' + Object.entries(A().tags).filter(e => e[1] > 0).map(e => e[0] + ' ×' + e[1]).join(', ') + '</small>' : ''}`;
+  hud.style.display = 'block'; hud.innerHTML = `${gd.icon} ${gd.name}<br><b>${S.mag[id] || 0}</b> / ${gd.mag} <small>· ${res} spare</small>${S.reloadT > 0 ? '<br><small>reloading…</small>' : ''}${S.charge > 0 ? '<br><span style="display:inline-block;width:120px;height:8px;background:#333;border-radius:4px;overflow:hidden"><span style="display:block;height:100%;width:' + Math.round(S.charge * 100) + '%;background:' + (S.charge >= 1 ? '#48bb78' : '#ecc94b') + '"></span></span>' : ''}${A().licence && Object.values(A().tags).some(n => n > 0) ? '<br><small>🏷️ ' + Object.entries(A().tags).filter(e => e[1] > 0).map(e => e[0] + ' ×' + e[1]).join(', ') + '</small>' : ''}`;
   xh.style.display = scope ? 'none' : 'block'; scopeEl.style.display = scope ? 'block' : 'none';
   const gap = 6 + (lerp(gd.spread, gd.ads, S.ads) + S.bloom) * 260; const ii = xh.children; ii[0].style.left = (-gap - 9) + 'px'; ii[1].style.left = gap + 'px'; ii[2].style.top = (-gap - 9) + 'px'; ii[3].style.top = gap + 'px';
   xh.className = S.aimPerson ? 'red' : '';
@@ -698,26 +943,39 @@ function setHud() {
 
 // ---------- every frame ----------
 export function updateGuns(dt, pl) {
-  player = pl; S.lastUpd = performance.now(); updateFx(dt); updateProjs(dt); updateDowned(dt); updateFinds();
+  player = pl; S.lastUpd = performance.now(); updateFx(dt); updateProjs(dt); updateDowned(dt); updateFinds(); updatePolice(dt);
   if (RANGE.built) { updateCh(dt); rangeSurprise(dt); updateRangeBits(dt); if (A().guns.includes('pistol') && GUNS.pistol.rental && Math.hypot(pl.x - RANGE.x, pl.z - RANGE.z) > 220) { A().guns = A().guns.filter(g => g !== 'pistol'); if (S.out === 'pistol') holster(); ui.toast('🔫 Rental returned', 'The range pistol stays at the range. Come back any time.', 2500); } }
-  updateGame(dt);
+  updateGame(dt); updateShopSigns();
+  for (const z of zombies) if (z.slowT > 0) z.slowT -= dt;
+  updateBleeding(dt);
+  updateFires(dt);
   // keys
   if (!G.dialogOpen && !pl.transit) {
-    if (tapped('KeyO')) { if (S.out) holster(); else draw(A().last && A().guns.includes(A().last) ? A().last : A().guns[0]) || (A().guns.length ? 0 : ui.toast('No guns yet', 'Cabbagela\'s Outdoors (🦌 on the map) sells them, the range next door rents a pistol, and a few are hidden around town…', 3500)); }
-    for (const id in GUNS) if (tapped('Digit' + GUNS[id].slot) && A().guns.includes(id)) { if (S.out === id) holster(); else draw(id); }
+    if (tapped('KeyO')) { if (S.out) holster(); else draw(A().last && A().guns.includes(A().last) ? A().last : A().guns[0]) || (A().guns.length ? 0 : ui.toast('No guns yet', 'Gun shops are 🎯 on the map (Cabbagela\'s at the range rents a pistol too), and a few guns are hidden around town…', 3500)); }
+    for (let n = 0; n <= 9; n++) if (tapped('Digit' + n)) { const ids = slotGuns(n); if (!ids.length) continue; const i = ids.indexOf(S.out); draw(ids[(i + 1) % ids.length]); }
+    if (S.out && G.mouse.wheel) { if (GUNS[S.out].scope && S.ads > 0.5) { const n = (GUNS[S.out].zooms || [0]).length; S.zi = clamp((S.zi ?? 1) - Math.sign(G.mouse.wheel), 0, n - 1); G.mouse.wheel = 0; } else cycle(Math.sign(G.mouse.wheel)); }
   }
   if (!S.out) { setHud(); return; }
   if (pl.vehicle || pl.transit || pl.dead || pl.swimming || !A().guns.includes(S.out)) { holster(); return; }
+  const gd = GUNS[S.out];
   S.cool -= dt; S.bloom = Math.max(0, S.bloom - dt * 0.12);
   if (S.reloadT > 0) { S.reloadT -= dt; if (S.reloadT <= 0) { S.reloadT = 0; reloadNow(S.out); } }
   if (tapped('KeyR')) startReload();
-  const wantAds = (S.rmb || key('KeyZ') && false) ? 1 : 0; S.ads += (wantAds - S.ads) * Math.min(1, dt * 10);
-  if (!G.dialogOpen && (G.mouse.click || (GUNS[S.out].auto && S.held))) fire();
-  // face where you aim; arms up holding the gun
+  S.ads += ((S.rmb ? 1 : 0) - S.ads) * Math.min(1, dt * 10);
+  if (!G.dialogOpen) {
+    if (gd.charge) {   // bow: hold to draw, let go to loose
+      if (S.held && S.cool <= 0 && S.reloadT <= 0 && (S.mag[S.out] || 0) > 0) { if (!S.charge) SND.draw(); S.charge = Math.min(1, (S.charge || 0) + dt / 0.9); }
+      else if (!S.held && S.charge > 0) { fire(S.charge); S.charge = 0; }
+      if (G.mouse.click && !S.held && !S.charge) fire(0.6);   // a quick tap (no mouse hold, e.g. a bot) = a 60% draw
+    } else if (G.mouse.click || (gd.auto && S.held)) fire();
+  }
+  // face where you aim; arms up holding the gun (one hand for pistols, flares and the spray can)
   pl.yaw = G.camYaw; if (!pl.board) pl.model.grp.rotation.y = pl.yaw;
-  const P = pl.model.parts, two = S.out !== 'pistol' && S.out !== 'golden', up = Math.PI / 2 - S.aimP + S.kickP * 2;
-  P.armR.rotation.x = up; P.armR.rotation.z = two ? -0.08 : -0.22;
-  P.armL.rotation.x = up + (two ? 0.12 : 0); P.armL.rotation.z = two ? 0.62 : 0.45;   // left hand comes across to the fore-end / the grip
+  const P = pl.model.parts, one = ['pistol', 'golden', 'flare', 'spray'].includes(S.out), up = Math.PI / 2 - S.aimP + S.kickP * 2;
+  P.armR.rotation.x = up; P.armR.rotation.z = one ? -0.22 : -0.08;
+  P.armL.rotation.x = up + (one ? 0 : 0.12); P.armL.rotation.z = one ? 0.45 : 0.62;
+  if (S.out === 'bow') { P.armL.rotation.x = up; P.armL.rotation.z = 0.15; P.armR.rotation.x = up - 0.2 - (S.charge || 0) * 0.5; P.armR.rotation.z = -0.1 - (S.charge || 0) * 0.5; }
+  if (S.out === 'spray' && !(S.held || G.mouse.click)) { P.armL.rotation.x = 0.2; P.armL.rotation.z = 0.1; }
   if (P.stick) P.stick.visible = false;
   aimAtPeople(); setHud();
 }
@@ -733,7 +991,7 @@ function updateRangeBits(dt) {
 export function gunCamera(cam, dt) {
   if (!S.out || player.vehicle || player.transit) { if (S.fovSet) { cam.fov += (65 - cam.fov) * Math.min(1, dt * 8); if (Math.abs(cam.fov - 65) < 0.1) { cam.fov = 65; S.fovSet = false; } cam.updateProjectionMatrix(); } if (viewGrp) viewGrp.visible = false; return; }
   const gd = GUNS[S.out], fp = camModeNow() === 2, scope = gd.scope && S.ads > 0.5;
-  const zoom = scope ? lerp(65, 9, S.ads) : lerp(65, fp ? 48 : 44, S.ads), zs = zoom / 65;
+  const zs_ = gd.zooms || [gd.zoom || 9]; S.zi = clamp(S.zi ?? 1, 0, zs_.length - 1); const zoom = scope ? lerp(65, zs_[S.zi], S.ads) : lerp(65, fp ? 48 : 44, S.ads), zs = zoom / 65;
   const sens = G.settings?.sens ?? 1, inv = G.settings?.invertY ? -1 : 1;
   G.camYaw += G.mouse.dx * 0.0025 * sens * (1 - zs);   // undo part of the turn when zoomed (finer aim)
   S.aimP = clamp(S.aimP + G.mouse.dy * 0.0022 * sens * inv * zs, -1.15, 1.15);
@@ -758,17 +1016,153 @@ export function gunCamera(cam, dt) {
   if (scope) player.model.grp.visible = false; else if (!fp) player.model.grp.visible = true;
 }
 
+
+// ---------- fire, smoke and explosions ----------
+// soft round particles with their own alpha (log-depth aware), one additive set for flames, one normal set for smoke
+const SPRITE_VS = `attribute float aSize; attribute vec4 aCol; uniform float uScale; varying vec4 vCol;
+#include <common>
+#include <logdepthbuf_pars_vertex>
+void main() { vCol = aCol; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = aSize * uScale / max(0.5, -mv.z); gl_Position = projectionMatrix * mv;
+#include <logdepthbuf_vertex>
+}`;
+const SPRITE_FS = `varying vec4 vCol;
+#include <logdepthbuf_pars_fragment>
+void main() {
+#include <logdepthbuf_fragment>
+  float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; gl_FragColor = vec4(vCol.rgb, vCol.a * smoothstep(0.5, 0.05, r)); }`;
+function puffSet(n, additive) {
+  const geo = new THREE.BufferGeometry(), pos = new Float32Array(n * 3).fill(-1e5), col = new Float32Array(n * 4), size = new Float32Array(n);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('aCol', new THREE.BufferAttribute(col, 4)); geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  const mat = new THREE.ShaderMaterial({ vertexShader: SPRITE_VS, fragmentShader: SPRITE_FS, uniforms: { uScale: { value: 600 } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; scene.add(pts);
+  return { n, pos, col, size, geo, mat, vel: new Float32Array(n * 3), life: new Float32Array(n), life0: new Float32Array(n), s0: new Float32Array(n), i: 0, additive };
+}
+const FLAME = puffSet(900, true), SMOKE = puffSet(700, false);
+function emit(P, x, y, z, vx, vy, vz, life, size) { const i = P.i++ % P.n; P.pos.set([x, y, z], i * 3); P.vel.set([vx, vy, vz], i * 3); P.life[i] = P.life0[i] = life; P.s0[i] = size; }
+function stepPuffs(P, dt, smoke) {
+  for (let i = 0; i < P.n; i++) {
+    if (P.life[i] <= 0) { P.col[i * 4 + 3] = 0; continue; }
+    P.life[i] -= dt; const b = i * 3, age = 1 - P.life[i] / P.life0[i];
+    P.vel[b + 1] += (smoke ? 0.6 : 2.5) * dt; P.vel[b] += (smoke ? 1.2 : 0.3) * dt; P.vel[b] *= 1 - dt * (smoke ? 0.3 : 1.2); P.vel[b + 2] *= 1 - dt * (smoke ? 0.3 : 1.2);
+    P.pos[b] += P.vel[b] * dt; P.pos[b + 1] += P.vel[b + 1] * dt; P.pos[b + 2] += P.vel[b + 2] * dt;
+    const c = i * 4;
+    if (smoke) { const g = 0.18 + age * 0.35; P.col[c] = g; P.col[c + 1] = g; P.col[c + 2] = g * 1.02; P.col[c + 3] = (age < 0.1 ? age * 10 : 1) * (1 - age) * 0.55; P.size[i] = P.s0[i] * (1 + age * 3); }
+    else { P.col[c] = 1; P.col[c + 1] = 0.85 - age * 0.7; P.col[c + 2] = 0.35 - age * 0.35; P.col[c + 3] = (1 - age) * 0.9; P.size[i] = P.s0[i] * (1 - age * 0.6); }
+    if (P.life[i] <= 0) P.pos[b + 1] = -1e5;
+  }
+  P.geo.attributes.position.needsUpdate = true; P.geo.attributes.aCol.needsUpdate = true; P.geo.attributes.aSize.needsUpdate = true;
+  P.mat.uniforms.uScale.value = innerHeight / (2 * Math.tan(camera.fov * Math.PI / 360));
+}
+const fires = [];   // { x, y, z, end, size, flame, obj (follow), oy }
+export function addFire(x, y, z, dur, size = 1, o = {}) { const f = { x, y, z, end: G.t + dur, size, flame: o.flame !== false, obj: o.obj || null, oy: o.oy || 0, ox: o.ox || 0 }; fires.push(f); if (fires.length > 40) fires.shift(); return f; }
+function updateFires(dt) {
+  for (let i = fires.length - 1; i >= 0; i--) {
+    const f = fires[i]; if (G.t > f.end || f.obj?.gone) { fires.splice(i, 1); continue; }
+    if (f.obj) { const o = f.obj, g = o.g || o; f.x = (g.position?.x ?? o.x) + f.ox; f.y = (g.position?.y ?? o.y) + f.oy; f.z = (g.position?.z ?? o.z); }
+    if (Math.abs(f.x - camera.position.x) + Math.abs(f.z - camera.position.z) > 6000) continue;
+    const left = Math.min(1, (f.end - G.t) / 6), wet = 1 - (G.wet || 0) * 0.5;
+    if (f.flame) for (let k = 0; k < Math.ceil(f.size * 30 * dt * left * wet + Math.random()); k++) emit(FLAME, f.x + R(-0.5, 0.5) * f.size, f.y + R(0, 0.3), f.z + R(-0.5, 0.5) * f.size, R(-0.4, 0.4), R(1.5, 3.5) * Math.sqrt(f.size), R(-0.4, 0.4), R(0.4, 0.9), R(0.5, 1.1) * f.size);
+    if (Math.random() < dt * f.size * (f.flame ? 9 : 6)) emit(SMOKE, f.x + R(-0.4, 0.4) * f.size, f.y + (f.flame ? 1.2 : 0.3) * f.size, f.z + R(-0.4, 0.4) * f.size, R(-0.3, 0.3), R(1.5, 2.8), R(-0.3, 0.3), R(4, 8), R(1.2, 2.2) * f.size);
+  }
+  stepPuffs(FLAME, dt, false); stepPuffs(SMOKE, dt, true);
+  if (fires.some(f => f.flame && Math.hypot(f.x - player.x, f.z - player.z) < 30) && Math.random() < dt * 3) noise(0.5, 0.025, 600);   // crackle
+}
+// a fuel tank / an aircraft hitting the ground: fireball, debris, a shock that knocks things over, then it burns
+export function explode(x, y, z, size = 1, cause = 'explosion') {
+  for (let k = 0; k < 60 * size; k++) emit(FLAME, x + R(-1, 1) * size, y + R(0, 1.5) * size, z + R(-1, 1) * size, R(-6, 6) * size, R(2, 9) * size, R(-6, 6) * size, R(0.5, 1.3), R(1.2, 2.6) * size);
+  for (let k = 0; k < 25 * size; k++) emit(SMOKE, x + R(-2, 2) * size, y + R(0, 3) * size, z + R(-2, 2) * size, R(-2, 2), R(2, 5), R(-2, 2), R(6, 12), R(2.5, 4.5) * size);
+  burst(_v.set(x, y + 1, z), 30, '#3a3a3a', 7 * size, 7 * size);
+  const d = Math.hypot(x - camera.position.x, y - camera.position.y, z - camera.position.z);
+  setTimeout(() => { noise(2.2, Math.min(0.7, 0.9 * size / (1 + d / 120)), 260); beep([38, 30], 0.7, 'sine', Math.min(0.35, 0.4 * size / (1 + d / 120)), 0.05); }, Math.min(2500, d / 343 * 1000));   // sound arrives at the speed of sound
+  if (d < 60) S.kickP += 0.04 * size;
+  decal(_v2.set(x, walkY(x, z, y + 1) + 0.03, z), _up2, 2.2 * size, '#141414');
+  // the shock wave
+  const R2 = 9 * size;
+  for (const p of peds) { if (p.state === 'dead' || p.x > 1e5) continue; const dd = Math.hypot(p.x - x, p.z - z); if (dd < R2 && (p.sc || 1) >= 0.8) { if (dd < R2 * 0.35) { p.state = 'dead'; p.timer = 45; crime(2, p.x, p.z); player.karma -= 10; } else { p.state = 'down'; p.timer = 4; p.after = 'flee'; say(p, pick(['WHOA!', 'AAAH!', 'My ears!']), 1500); } } else if (dd < R2 * 4) { p.state = 'flee'; p.timer = 8; } }
+  for (const v of vehicles) { const dd = Math.hypot(v.x - x, v.z - z); if (dd < R2 && dd > 0.5 && v !== player.vehicle) try { knock(v, (v.x - x) / dd * 6 * size, (v.z - z) / dd * 6 * size, R(-1, 1), 10); } catch (e) { /* optional */ } }
+  { const dd = Math.hypot(player.x - x, player.z - z); if (dd < R2 * 0.8 && !player.vehicle) { player.hurt?.(Math.round(60 * size * (1 - dd / (R2 * 0.8))), cause); player.vy = 6; } }
+  for (const a of _fauna.live) if (!a.down && Math.hypot(a.x - x, a.z - z) < R2 * 6) { _fauna.setSt(a, 'flee', 10); a.tx = a.x + (a.x - x) * 3; a.tz = a.z + (a.z - z) * 3; }
+  addFire(x, y, z, 45 * size, 1.4 * size);
+}
+
+// ---------- aircraft: shoot the cockpit or an engine to bring it down ----------
+const AIR_HP = { jet: 450, jumbo: 800, heli: 160, fixed: 150, balloon: 50 };
+function airKind(c) { return c.T.kind === 'heli' ? 'heli' : c.T.kind === 'balloon' ? 'balloon' : /jumbo|747|wide/i.test(c.type) ? 'jumbo' : /jet|yvr|high|air/i.test(c.type) && !/cessna|beaver|otter|float|bi/i.test(c.type) ? 'jet' : 'fixed'; }
+function airR(c) { if (c.br === undefined) { const sc = c.g.scale.x || 1; c.g.scale.setScalar(1); const b = new THREE.Box3().setFromObject(c.g), s = b.getSize(new THREE.Vector3()); c.br = Math.max(4, Math.max(s.x, s.z) / 2); c.g.scale.setScalar(sc); } return c.br * (c.g.scale.x || 1); }
+function hitAircraft(h, d, id, dmg) {
+  const c = h.obj, K = airKind(c), Rr = airR(c), pos = c.g.position, fx = -Math.sin(c.hd || 0), fz = -Math.cos(c.hd || 0);
+  const along = ((h.p.x - pos.x) * fx + (h.p.z - pos.z) * fz) / Rr, low = h.p.y < pos.y;
+  const zone = K === 'balloon' ? (h.p.y < pos.y - Rr * 0.3 ? 'basket' : 'envelope') : along > 0.45 ? 'cockpit' : K === 'heli' ? (Math.abs(along) < 0.3 ? 'engine' : along < -0.5 ? 'tail rotor' : 'body') : (Math.abs(along) < 0.25 && low ? 'engine' : along < -0.55 ? 'tail' : 'wing');
+  const mult = { cockpit: 3, engine: 2, 'tail rotor': 2.5, basket: 2, envelope: 1, body: 1, tail: 0.8, wing: 0.6 }[zone];
+  c.ahp = (c.ahp ?? AIR_HP[K]) - dmg * mult; burst(h.p, 8, '#ffe08a', 3, 2); SND.metal();
+  if (!c.shotHit) { c.shotHit = true; crime(1, pos.x, pos.z); }
+  if (zone === 'cockpit' && dmg >= 100 && K !== 'jumbo') c.ahp = Math.min(c.ahp, 0);   // the pilot is hit
+  const max = AIR_HP[K];
+  if (c.ahp < max * 0.6 && !c.smk && K !== 'balloon') { c.smk = addFire(0, 0, 0, 600, K === 'jumbo' || K === 'jet' ? 2.2 : 1.1, { flame: false, obj: c.g }); }
+  if (c.ahp < max * 0.25 && !c.fireOn && K !== 'balloon') { c.fireOn = addFire(0, 0, 0, 600, K === 'jumbo' || K === 'jet' ? 1.8 : 0.9, { obj: c.g }); }
+  if (G.t - (S.airToast || -99) > 3) { S.airToast = G.t; ui.toast('✈️ Hit: ' + zone, c.ahp <= 0 ? 'It\'s going down!' : K === 'balloon' ? 'Hissss… the envelope is leaking.' : `Damage ${Math.round(100 - Math.max(0, c.ahp) / max * 100)}%. Cockpit and engines are the weak spots.`, 1800); }
+  if (c.ahp <= 0 && !c.shot) shootDown(c, K, zone);
+}
+function shootDown(c, K, zone) {
+  c.shot = true; c.fallK = K; const sp = Math.max(K === 'heli' ? 8 : 25, c.v || 30), fx = -Math.sin(c.hd || 0), fz = -Math.cos(c.hd || 0);
+  c.fv = new THREE.Vector3(fx * sp, K === 'balloon' ? -1 : -2, fz * sp); c.spinR = R(0.6, 1.6) * (Math.random() < 0.5 ? -1 : 1);
+  if (!c.fireOn && K !== 'balloon') c.fireOn = addFire(0, 0, 0, 600, K === 'jumbo' || K === 'jet' ? 1.8 : 0.9, { obj: c.g });
+  ui.toast(K === 'balloon' ? '🎈 The balloon is coming down!' : '🔥 MAYDAY! MAYDAY!', K === 'balloon' ? 'Slowly, thankfully. The pilot is very, very cross.' : zone === 'cockpit' ? 'You hit the cockpit. It\'s spiralling down…' : 'Smoke pours from the ' + zone + '. It\'s going down…', 4000);
+  if (K !== 'balloon') { player.karma -= 50; crime(3, c.g.position.x, c.g.position.z); } else { player.karma -= 10; crime(1, c.g.position.x, c.g.position.z); }
+}
+// called by airtraffic.js stepCraft for a shot-down aircraft
+function fallStep(c, dt) {
+  const g = c.g, p = g.position, K = c.fallK;
+  c.fv.y -= 9.8 * dt * (K === 'balloon' ? 0.05 : K === 'heli' ? 0.9 : 0.55); if (K === 'balloon') c.fv.y = Math.max(c.fv.y, -2.2);
+  c.fv.x *= 1 - dt * 0.05; c.fv.z *= 1 - dt * 0.05;
+  p.addScaledVector(c.fv, dt);
+  if (K === 'heli') g.rotateY(c.spinR * 4 * dt); else if (K !== 'balloon') { g.rotateZ(c.spinR * dt); g.rotateX(-0.25 * dt); }
+  if (c.spin) c.spin.rotation.y += 20 * dt;
+  const gy = isWater(p.x, p.z) ? waterLevel(p.x, p.z) : groundY(p.x, p.z), b = buildingAt(p.x, p.z), floor = Math.max(gy, b && p.y > (b.base ?? 0) ? b.top : gy);
+  if (p.y <= floor + 1) {
+    if (K === 'balloon') { c.fv.set(0, 0, 0); if (!c.landedT) { c.landedT = G.t; ui.toast('🎈 Touchdown', 'The balloon flops onto the ground. Everyone climbs out, shaken but fine.', 3000); } if (G.t - c.landedT > 25) { c.remove = true; c.shot = false; c.ahp = undefined; c.shotHit = false; c.landedT = 0; } return; }
+    const water = isWater(p.x, p.z);
+    if (water) { burst(_v.set(p.x, gy, p.z), 80, '#e8f4f8', 6, 12); SND.splash(); addFire(p.x, gy, p.z, 40, 1.5, { flame: false }); }
+    else explode(p.x, floor, p.z, K === 'jumbo' ? 3 : K === 'jet' ? 2.2 : 1.3, 'plane crash');
+    ui.toast('💥 It crashed', water ? 'It hit the water. Rescue boats are racing out.' : 'A fireball, then black smoke rising over the city. Every siren in town is heading here.', 4500); discover('mayday');
+    g.visible = false; c.remove = true; if (c.smk) c.smk.end = 0; if (c.fireOn) c.fireOn.end = 0;
+    c.shot = false; c.ahp = undefined; c.smk = c.fireOn = null; c.shotHit = false; c.landedT = 0;   // airtraffic.js pools and reuses aircraft
+  }
+}
+airHooks.shot = fallStep;
+
+// ---------- gun counters at the real gun shops (outside their front door) ----------
+function buildShops() {
+  for (const sh of SHOPS) {
+    const [px, pz] = toXZ(...sh.at); let best = null;
+    for (let r = 0; r <= 40 && !best; r += 2) for (let a = 0; a < 6.28; a += r ? 2 / r : 7) { const x = px + Math.cos(a) * r, z = pz + Math.sin(a) * r; if (!isWater(x, z) && !buildingAt(x, z) && !inRoadway(x, z, 0.6)) { best = [x, z]; break; } }
+    if (!best) continue; const [x, z] = best, y = walkY(x, z, groundY(x, z) + 0.5); sh.x = x; sh.z = z;
+    const nr = nearestRoad(x, z, 40, r => r.t <= 6); let yaw = 0;
+    if (nr) { const e = nr.e, M = window.MAP; void M; const bx = px - x, bz = pz - z; yaw = Math.atan2(bx, bz) + Math.PI; }
+    const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = yaw; scene.add(g); sh.g = g;
+    addMesh(new THREE.BoxGeometry(2.4, 1.05, 0.7), std('#3a2a1a'), 0, 0.52, 0, g); addMesh(new THREE.BoxGeometry(2.5, 0.06, 0.8), std('#a0aec0', { metalness: 0.5 }), 0, 1.08, 0, g);
+    for (const dx of [-1.15, 1.15]) addMesh(new THREE.BoxGeometry(0.08, 2.6, 0.08), MET, dx, 1.3, -0.3, g);
+    const tex = canvasTex(512, 128, (c, w, h) => { c.fillStyle = '#1a202c'; c.fillRect(0, 0, w, h); c.strokeStyle = '#ecc94b'; c.lineWidth = 6; c.strokeRect(4, 4, w - 8, h - 8); c.fillStyle = '#ecc94b'; c.font = 'bold 40px Segoe UI, Arial'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('🎯 ' + sh.name, w / 2, 46, w - 30); c.fillStyle = '#fff'; c.font = '26px Segoe UI, Arial'; c.fillText('GUNS · AMMO · LICENCES', w / 2, 94); }, false);
+    const sg = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.62), new THREE.MeshStandardMaterial({ map: tex, emissive: '#444', emissiveMap: tex, side: THREE.DoubleSide })); sg.position.set(0, 2.45, -0.3); g.add(sg);
+    // a few long guns on a rack behind the counter + a stuffed moose head (surprise)
+    for (let i = 0; i < 3; i++) { const m = gunModel(['rifle', 'shotgun', 'magnum'][i]); m.rotation.set(0, 0, Math.PI / 2); m.position.set(-0.6 + i * 0.6, 1.45, -0.32); m.scale.setScalar(0.9); g.add(m); }
+    const clerk = makeHuman({ skin: pick(['#e0ac7e', '#c68c5e', '#f1c9a5']), hair: '#6b6b6b', shirt: pick(['#4a5a2a', '#7a2a2a', '#2a4a6a']), pants: '#2d3748', hat: pick(['#c53030', '#2f855a', null]), beard: '#7a7a7a' }); scene.remove(clerk.grp); g.add(clerk.grp); clerk.grp.position.set(0, 0, -0.75); clerk.st.kind = 'idle'; clerk.pose(0); sh.clerk = clerk;
+  }
+}
+function updateShopSigns() { for (const sh of SHOPS) if (sh.g) sh.g.visible = Math.hypot(player.x - sh.x, player.z - sh.z) < 700; }
+
 // ---------- prompts (E) + markers ----------
 export function gunPrompt(pl) {
   player = pl; if (pl.vehicle || pl.transit || G.dialogOpen) return '';
   const dp = downedPrompt(); if (dp) return dp;
   for (const f of FINDS) if (f.g?.visible && Math.hypot(pl.x - f.x, pl.z - f.z) < 3.5) { if (tapped('KeyE')) takeFind(f); return `<kbd>E</kbd> ${f.gun ? GUNS[f.gun].icon + ' Pick it up' : '📦 Open the crate'}`; }
+  for (const sh of SHOPS) if (sh.x !== undefined && Math.hypot(pl.x - sh.x, pl.z - sh.z) < 3.5) { if (tapped('KeyE')) openShop(sh); return '<kbd>E</kbd> 🎯 Gun counter: ' + sh.name; }
   if (!RANGE.built) return '';
   if (Math.hypot(pl.x - RANGE.shop.x, pl.z - RANGE.shop.z) < 4.5) { if (tapped('KeyE')) openShop(); return '<kbd>E</kbd> 🦌 Shop at Cabbagela\'s Outdoors'; }
   if (Math.hypot(pl.x - RANGE.desk.x, pl.z - RANGE.desk.z) < 3.5) { if (tapped('KeyE')) { if (activeMission()) ui.toast('Finish your mission first', '', 1500); else openDesk(); } return '<kbd>E</kbd> 🎯 Range desk (challenges, rent a pistol)'; }
   return '';
 }
-export function gunMarkers() { return RANGE.built ? [{ x: RANGE.shop.x, z: RANGE.shop.z, icon: '🎯' }] : []; }
-export function initGuns(pl) { player = pl; makeHud(); try { buildRange(); } catch (e) { console.warn('guns: range', e); } try { buildFinds(); } catch (e) { console.warn('guns: finds', e); } }
+export function gunMarkers() { return [...(RANGE.built ? [{ x: RANGE.shop.x, z: RANGE.shop.z, icon: '🎯' }] : []), ...SHOPS.filter(s => s.x !== undefined).map(s => ({ x: s.x, z: s.z, icon: '🎯' }))]; }
+export function initGuns(pl) { player = pl; makeHud(); initPolice(pl, () => { const id = S.out; if (!id || GUNS[id].golden) return null; A().guns = A().guns.filter(g => g !== id); holster(); return GUNS[id].name; }); try { buildShops(); } catch (e) { console.warn('guns: shops', e); } try { buildRange(); } catch (e) { console.warn('guns: range', e); } try { buildFinds(); } catch (e) { console.warn('guns: finds', e); } }
 export function gunsLoad() { const src = OWN.arms; OWN.arms = Object.assign(freshArms(), src || {}); OWN.arms.guns = OWN.arms.guns.filter(g => GUNS[g] && !GUNS[g].rental); S.mag = {}; holster(); }   // after shopLoad (the rental pistol never leaves the range)
-export const _guns = { S, GUNS, RANGE, targets, FINDS, LEGAL, A, give, draw, holster, fire, startCh, castSeg, peopleHit, legalWhy, down, openShop, openDesk, aim: (yaw, p) => { G.camYaw = yaw; S.aimP = p; }, aimAt(x, y, z) { const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z; G.camYaw = Math.atan2(-(x - cx), -(z - cz)); S.aimP = -Math.atan2(y - cy, Math.hypot(x - cx, z - cz)); } };
+export const _guns = { S, GUNS, SHOPS, WANTED, RANGE, targets, FINDS, LEGAL, A, give, draw, holster, fire, cycle, impact, startCh, castSeg, peopleHit, legalWhy, down, openShop, openDesk, aim: (yaw, p) => { G.camYaw = yaw; S.aimP = p; }, aimAt(x, y, z) { const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z; G.camYaw = Math.atan2(-(x - cx), -(z - cz)); S.aimP = -Math.atan2(y - cy, Math.hypot(x - cx, z - cz)); } };

@@ -60,6 +60,7 @@ import { renderWorld, updateCumulus } from './post.js';
 import { initRamps, rampMarkers, setDiscover } from './moves.js';
 import { discover as discoverSecret } from './missions.js';
 import { initGuns, updateGuns, gunCamera, gunMarkers, gunsLoad } from './guns.js';
+import { copTalkers } from './police.js';
 import { initIsland, updateIsland, onIsland } from './island.js';
 import { isInside, enterHome, exitHome, updateInterior, renderInterior, homeName } from './interiors.js';
 import { initShops, shopMarkers, shopSave, shopLoad, OWN, OUTFITS, RIDES, PROPS, rentPerDay, callRide, goHome, wear, startGig, cancelGig, gigActive, gigText } from './shops.js';
@@ -374,7 +375,7 @@ function loop(now, manual) {
   __mark('cullTreeChunks(player.');
   updateSigns(player.x, player.z, dt);
   __mark('updateSigns(player.x, ');
-  updateBubbles(animals.filter(a => a.say).concat(lifeTalkers()));
+  updateBubbles(animals.filter(a => a.say).concat(lifeTalkers(), copTalkers()));
   __mark('updateBubbles(animals.');
   updateHud(player, placeName());
   __mark('updateHud(player, plac');
